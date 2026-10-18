@@ -1,0 +1,9 @@
+{
+    "Name": "Headphones Preview",
+    "Version": "@PROJECT_VERSION@",
+    "Author": "",
+    "Category": "Playback",
+    "Description": "Independent headphone preview (development scaffold)",
+    "License": "GPL-3.0-or-later",
+    "Url": ""
+}

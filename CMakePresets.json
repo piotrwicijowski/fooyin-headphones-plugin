@@ -1,0 +1,48 @@
+{
+    "version": 2,
+    "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+    "configurePresets": [
+        {
+            "name": "dev",
+            "displayName": "Local Debug (sibling fooyin)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "BUILD_TESTING": "OFF",
+                "FOOYIN_FORCE_DEV_TREE": "ON"
+            }
+        },
+        {
+            "name": "dev-release",
+            "inherits": "dev",
+            "binaryDir": "${sourceDir}/build-release",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+        },
+        {
+            "name": "agent",
+            "inherits": "dev",
+            "binaryDir": "${sourceDir}/build-agent"
+        },
+        {
+            "name": "test-agent",
+            "inherits": "agent",
+            "binaryDir": "${sourceDir}/build-test-agent",
+            "cacheVariables": { "BUILD_TESTING": "ON" }
+        }
+    ],
+    "buildPresets": [
+        { "name": "dev", "configurePreset": "dev" },
+        { "name": "dev-release", "configurePreset": "dev-release" },
+        { "name": "agent", "configurePreset": "agent" },
+        { "name": "test-agent", "configurePreset": "test-agent" }
+    ],
+    "testPresets": [
+        {
+            "name": "test-agent",
+            "configurePreset": "test-agent",
+            "environment": { "QT_QPA_PLATFORM": "offscreen" },
+            "output": { "outputOnFailure": true }
+        }
+    ]
+}
