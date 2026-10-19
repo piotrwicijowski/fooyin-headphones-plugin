@@ -3,7 +3,7 @@
     "Version": "@PROJECT_VERSION@",
     "Author": "",
     "Category": "Playback",
-    "Description": "Independent headphone preview output engine (UI in development)",
+    "Description": "Independent headphone preview with track actions, transport panel and explicit device settings",
     "License": "GPL-3.0-or-later",
     "Url": ""
 }

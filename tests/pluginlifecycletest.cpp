@@ -4,12 +4,23 @@
 #include <core/engine/audioloader.h>
 #include <core/plugins/coreplugin.h>
 #include <core/plugins/plugin.h>
+#include <gui/fywidget.h>
 #include <gui/plugins/guiplugin.h>
+#include <gui/plugins/pluginconfigguiplugin.h>
+#include <gui/widgetprovider.h>
+#include <utils/actions/actionmanager.h>
+#include <utils/actions/command.h>
+#include <utils/settings/settingsmanager.h>
 
 #include <QApplication>
+#include <QDialogButtonBox>
 #include <QJsonObject>
 #include <QLoggingCategory>
+#include <QMainWindow>
 #include <QPluginLoader>
+#include <QPushButton>
+#include <QSlider>
+#include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
 
@@ -133,6 +144,73 @@ private Q_SLOTS:
         QVERIFY(loader.unload()); // Destructor is also a shutdown path.
         QCOMPARE(messages.count(u"GUI initialised"_s), 1);
         QCOMPARE(messages.count(u"Shutdown complete"_s), 1);
+    }
+
+    void loadedPluginRegistersPanelActionsAndSharedConfiguration()
+    {
+        QTemporaryDir dir;
+        SettingsManager settings {dir.filePath(u"settings.ini"_s)};
+        QMainWindow mainWindow;
+        ActionManager actions {&settings};
+        actions.setMainWindow(&mainWindow);
+        // The provider must release its plugin callbacks before module unload.
+        auto widgets = std::make_unique<WidgetProvider>();
+        QPluginLoader loader {pluginPath};
+        loader.setLoadHints({});
+        auto* root = loader.instance();
+        QVERIFY2(root, qPrintable(loader.errorString()));
+        auto* core   = qobject_cast<CorePlugin*>(root);
+        auto* gui    = qobject_cast<GuiPlugin*>(root);
+        auto* plugin = qobject_cast<Plugin*>(root);
+        auto* config = qobject_cast<PluginConfigGuiPlugin*>(root);
+        QVERIFY(core && gui && plugin && config);
+        auto coreServices            = coreContext();
+        coreServices.settingsManager = &settings;
+        coreServices.audioLoader     = std::make_shared<AudioLoader>();
+        core->initialise(coreServices);
+        auto guiServices           = guiContext();
+        guiServices.actionManager  = &actions;
+        guiServices.widgetProvider = widgets.get();
+        gui->initialise(guiServices);
+        QVERIFY(widgets->widgetExists(u"HeadphonesPreview"_s));
+        auto* panel = widgets->createWidget(u"HeadphonesPreview"_s);
+        QVERIFY(panel);
+        QVERIFY(!widgets->createWidget(u"HeadphonesPreview"_s));
+        auto* command = actions.command("Headphones.PreviewSelected");
+        QVERIFY(command);
+        QVERIFY(command->defaultShortcuts().isEmpty());
+        auto* volume = panel->findChild<QSlider*>(u"Headphones.Volume"_s);
+        QVERIFY(volume);
+        volume->setValue(37);
+        QCOMPARE(settings.value(u"Headphones/Volume").toDouble(), 0.37);
+        auto provider = config->settingsProvider();
+        provider->showSettings(nullptr);
+        QDialog* dialog {nullptr};
+        for(auto* widget : QApplication::topLevelWidgets()) {
+            if(widget->objectName() == u"Headphones.Settings") {
+                dialog = qobject_cast<QDialog*>(widget);
+            }
+        }
+        QVERIFY(dialog);
+        panel->findChild<QPushButton*>(u"Headphones.Configure"_s)->click();
+        int count {0};
+        for(auto* widget : QApplication::topLevelWidgets()) {
+            count += widget->objectName() == u"Headphones.Settings";
+        }
+        QCOMPARE(count, 1);
+        QPointer<QWidget> oldPanel {panel};
+        delete panel;
+        panel = widgets->createWidget(u"HeadphonesPreview"_s);
+        QVERIFY(panel);
+        QCOMPARE(panel->findChild<QSlider*>(u"Headphones.Volume"_s)->value(), 37);
+        QPointer<QWidget> recreated {panel};
+        plugin->shutdown();
+        QVERIFY(recreated.isNull());
+        QVERIFY(!actions.command("Headphones.PreviewSelected"));
+        QVERIFY(!widgets->createWidget(u"HeadphonesPreview"_s));
+        provider.reset();
+        widgets.reset();
+        QVERIFY(loader.unload());
     }
 
     void retainsLoaderUntilShutdown()

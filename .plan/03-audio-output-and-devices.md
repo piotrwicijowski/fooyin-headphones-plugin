@@ -3,8 +3,10 @@
 Depends on: [02-session-and-decoding.md](02-session-and-decoding.md).
 
 Status: software implemented and automated/software-output checks passed.
-Physical two-device PipeWire acceptance is pending; the tested Qt 6.8.2
-PulseAudio disconnect policy failed isolation (see evidence below).
+The user has also confirmed successful physical main-A/Bluetooth-preview-B
+disconnect behavior after disabling WirePlumber's `linking.pause-playback` policy.
+Exact environment versions and the broader hardware matrix remain Phase 5 work;
+the separately tested Qt 6.8.2/PulseAudio failure remains documented below.
 
 ## Explicit device selection
 
@@ -142,8 +144,9 @@ Avoid making the whole controller depend on a particular Qt-version namespace.
 - [x] Play real MP3/FLAC/WAV inputs at 44.1/48/96 kHz as supported by available
   decoders and verify frame duration, pitch, level, and channels in output PCM
   submitted to a real software-backed QAudioSink. Physical listening is pending.
-- [ ] Prove concurrent main/headphone playback on separate PipeWire devices,
-  including a disconnect test that checks actual routing.
+- [x] Prove concurrent main/headphone playback on separate PipeWire devices,
+  including a disconnect test that checks actual routing (user-reported physical
+  main A/Bluetooth B setup; WirePlumber pause policy disabled, details below).
 
 ## Implementation notes
 
@@ -244,3 +247,46 @@ server policy (or a public QAudioSink no-move contract) must be validated before
 claiming leak-free device loss. No private Qt header or platform-specific routing
 dependency has been added to conceal the issue. This tested backend combination
 does not satisfy the first-release physical-isolation acceptance criterion.
+
+### User-reported Bluetooth disconnect result (environment details pending)
+
+A user tested actual main playback on output A while preview played through a
+Bluetooth headset B. Disconnecting B made the headphone output unavailable and
+preview did not transfer to another device. However, main playback on A paused.
+The user subsequently confirmed that disabling WirePlumber's
+`linking.pause-playback` policy resolved the unwanted main pause and that the
+setup works. This provides user-reported physical-device evidence for concurrent
+playback, loss detection/no reroute, and continued main playback under that policy.
+That result does not invalidate the separately observed Qt 6.8.2/PulseAudio
+null-sink failure above;
+the user's Qt/backend/desktop versions have not yet been identified.
+
+The user subsequently confirmed that the pause occurs only with preview playing
+and captured an external session-bus call from `:1.6` to
+`org.mpris.MediaPlayer2.fooyin`, path `/org/mpris/MediaPlayer2`, interface
+`org.mpris.MediaPlayer2.Player`, member `Pause`. This establishes an external main
+MPRIS pause request, not a preview-to-main transport call. The policy was confirmed
+by the user's successful retest; the bus name itself is session-specific.
+
+WirePlumber has an exact matching policy: `linking.pause-playback` (default true)
+pauses MPRIS media players whose audio streams were linked to a removed sink.
+Its upstream `linking/mpris-pause.lua` matches clients to players by process/PID,
+so an active preview stream in the fooyin process is associated with fooyin's
+main MPRIS player even while main audio is routed elsewhere. The hook exposes a
+global setting, not a per-stream exemption; changing the preview stream's name
+would not change this PID match.
+
+The successful user-side remedy was disabling `linking.pause-playback`. The
+documented runtime command is `wpctl settings linking.pause-playback false`;
+the setting can be queried with `wpctl settings linking.pause-playback` and saved
+with `wpctl settings --save linking.pause-playback false`. This changes the
+session-wide unplug auto-pause policy for all players, not just fooyin. Recheck
+preview stop/no-reroute as well as uninterrupted main playback after changing
+policy; disabling MPRIS pausing does not itself enforce routing isolation. No
+automatic main-player resume or MPRIS pause suppression has been added to
+application code. Whether the user saved the setting, and the exact
+headset/desktop/Qt/PipeWire/WirePlumber versions, were not reported.
+
+References:
+- [WirePlumber well-known settings](https://pipewire.pages.freedesktop.org/wireplumber/daemon/configuration/settings.html)
+- [WirePlumber MPRIS pause hook](https://github.com/PipeWire/wireplumber/blob/master/src/scripts/linking/mpris-pause.lua)

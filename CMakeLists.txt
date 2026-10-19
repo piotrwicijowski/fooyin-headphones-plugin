@@ -59,7 +59,22 @@ set(HEADPHONES_SOURCES
     src/headphonesplugin.cpp
     src/headphonesplugin.h
     src/headphoneslog.h)
+add_library(HeadphonesGui STATIC
+    src/headphonesactions.h src/headphonesactions.cpp
+    src/headphoneswidget.h src/headphoneswidget.cpp
+    src/headphonessettingsdialog.h src/headphonessettingsdialog.cpp)
+set_target_properties(HeadphonesGui PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES)
+target_link_libraries(HeadphonesGui PUBLIC HeadphonesPreviewEngine Fooyin::Gui Qt6::Widgets)
+if(MSVC)
+    target_compile_options(HeadphonesGui PRIVATE /W4)
+else()
+    target_compile_options(HeadphonesGui PRIVATE -Wall -Wextra -Wpedantic)
+endif()
 set(HEADPHONES_DEPENDS
+    HeadphonesGui
     HeadphonesPreviewEngine
     Fooyin::Core Fooyin::Gui Fooyin::Utils
     Qt6::Core Qt6::Widgets Qt6::Multimedia Qt6::Sql

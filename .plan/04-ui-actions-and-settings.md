@@ -3,6 +3,11 @@
 Depends on: [02-session-and-decoding.md](02-session-and-decoding.md) and
 [03-audio-output-and-devices.md](03-audio-output-and-devices.md).
 
+Status: implemented and verified, including actual loaded-plugin, same-process
+main-player coexistence with Vim Motions. The subsequent user-confirmed physical
+Bluetooth disconnect result and WirePlumber policy are recorded in Phase 3;
+wider hardware coverage remains Phase 5 work.
+
 ## Host integration
 
 Core initialisation acquires `audioLoader` and `settingsManager`, registers
@@ -110,14 +115,111 @@ Dialog behaviour:
 
 ## Tests and acceptance
 
-- [ ] QAction/menu integration targets the correct track even if focus changes.
-- [ ] Multi-selection, empty/unsupported selections, and command enabled states
+- [x] QAction/menu integration targets the correct track even if focus changes.
+- [x] Multi-selection, empty/unsupported selections, and command enabled states
   follow the documented rules.
-- [ ] Widget observes the shared controller, supports pause-preserving seeking,
+- [x] Widget observes the shared controller, supports pause-preserving seeking,
   and can be destroyed/recreated without resetting main or preview playback.
-- [ ] Settings round-trip opaque IDs, duplicate names, missing-device state,
+- [x] Settings round-trip opaque IDs, duplicate names, missing-device state,
   volume bounds, Apply/Cancel, and no autoplay after restart/reconnect.
-- [ ] Keyboard actions coexist with ordinary fooyin transport and a separately
+- [x] Keyboard actions coexist with ordinary fooyin transport and a separately
   loaded Vim Motions plugin; no custom Vim integration is necessary.
-- [ ] No preview action emits main-player transport/track events, changes main
+- [x] No preview action emits main-player transport/track events, changes main
   volume/output settings, or mutates the queue/playlist.
+
+## Implementation notes
+
+- `HeadphonesActions` owns the five registered actions and their enable/help
+  state. Commands have the planned stable IDs/categories and no default bindings.
+  Keyboard commands use current focused selection; the panel uses the retained
+  display selection. Selection updates only refresh availability, never playback.
+- The public track-menu renderer creates a menu-owned action capturing the
+  immutable first track of its supplied TrackSelection. Triggering rechecks source
+  and device readiness without querying a new selection. QueueViewer already
+  includes the common track menu, so no duplicate queue-area entry is registered.
+- `HeadphonesWidget` is a FyWidget registered as `HeadphonesPreview`, display name
+  Headphones Preview, category Playback, limit one. It observes the shared service
+  and does not own or stop it. Metadata/device labels use plain text; controls
+  have accessible names and stable object names. Volume has visible percentage
+  feedback. Unknown-duration/unseekable inputs have no enabled seek control.
+- Seek dragging displays a tentative value and sends one request on release.
+  Pending seek feedback is retained until the current worker startup completes;
+  keyboard changes can replace the pending target. Qt feedback updates cannot
+  emit a second seek. Normalised slider coordinates avoid narrowing long durations
+  to int milliseconds, and paused state remains owned by PreviewController.
+- `HeadphonesSettingsDialog` stages its ID/description locally. Hotplug rebuilds
+  the choices without dropping a missing saved/pending ID; duplicate names include
+  encoded IDs. Apply/OK updates only the device, Cancel discards unapplied edits,
+  and live volume has no dialog field that can overwrite newer panel changes.
+- `PluginConfigGuiPlugin` is declared in both inheritance and Q_INTERFACES.
+  The host provider and panel button share one central PluginSettingsProvider
+  dialog through weak adapters. Opening it never starts audio. Shutdown destroys
+  dialogs/panels/actions before controller/device/settings teardown and unregisters
+  commands. Widget factory callbacks weakly guard service lifetime; stale factories
+  cannot recreate a panel after shutdown. Public WidgetProvider has no unregister
+  API, so tests release its registration callbacks before actually unloading a
+  module; the inspected host has restart-based unload and Qt's default unload pin.
+
+## Completion evidence
+
+- Matching baseline: Debian 13 x86_64, GCC 14.2.0, CMake 3.31.6, Qt 6.8.2, fooyin
+  0.13.1 `bb8d9f037`, existing `build-rebase-agent`, and the staged Qt Multimedia
+  development prefix used in Phases 1–3. No private fooyin headers were introduced.
+- Debug plugin/test and RelWithDebInfo builds passed. `ctest --preset test-agent
+  -V` passed all six suites: lifecycle 10, engine 39, source 6, converter 14,
+  output 13, GUI 8 = **90 Qt Test checks**, including suite setup/cleanup.
+- New GUI tests cover first-track/menu snapshots, focus/display-selection
+  separation, empty/unsupported selections, action registration/removal, staged
+  settings with hotplug/missing/duplicate devices, shared provider lifecycle,
+  pause-preserving single-request scrubbing, safe oversized-duration arithmetic,
+  volume feedback, unknown duration,
+  and panel destruction/recreation without stopping its session.
+- The loaded-module test uses real public ActionManager, SettingsManager and
+  WidgetProvider objects, discovers PluginConfigGuiPlugin with qobject_cast,
+  creates the actual registered panel, verifies its limit/shared configuration,
+  round-trips panel volume through actual plugin settings wiring, and verifies
+  shutdown/factory/action cleanup before module unload.
+- A fixture setup failure exposed ActionManager's requirement for a main window
+  before registering actions. The test fixtures now provide it through the public
+  setter. Focused GUI and loaded-module lifecycle suites passed an AddressSanitizer
+  + UndefinedBehaviorSanitizer build (`build-asan-agent`, leak detection disabled
+  for Qt); this checks the implemented QObject/dialog/panel teardown paths.
+
+### Actual plugin and main player in the same process
+
+`tests/inprocessdriver.cpp` is an included, opt-in test plugin, built under
+`build-test-agent/tests/inprocess` and never installed. It only uses public host
+interfaces; it does **not** instantiate a preview controller or a replacement
+Headphones module. It drives the actual loaded plugin through its registered
+track menu, ActionManager shortcuts, WidgetProvider panel and configuration UI.
+The driver requires `HEADPHONES_INPROCESS_TEST=1`, two explicit distinct Qt output
+IDs, three distinct 20-second local fixtures, an isolated configuration and the
+default English UI. README contains the launch command.
+
+The executed test loaded the actual Headphones plugin, the driver's module, and
+the sibling Vim Motions module into the matching fooyin process. The main player
+used its real engine/decoder and a test-only explicit-device QAudioSink backend
+on software sink A; the actual Headphones plugin used its normal output path on
+software sink B. The driver waited until the main engine had submitted at least
+48,000 frames, then verified:
+
+1. An actual context-menu preview action retained Preview A despite subsequent
+   focus/selection changes to Preview B.
+2. A configured Ctrl+Alt+Shift+F12 shortcut paused preview with Vim Motions loaded.
+   Main position and submitted output frames continued increasing during pause.
+3. Live volume changed to 61%, and a seek to 10 seconds remained paused.
+4. Resume and panel destruction/recreation preserved the actual shared session.
+5. Opening settings, same-ID Apply, changed-ID stop, restoring the device without
+   autoplay, and Cancel used the real plugin UI.
+6. A focused-selection Ctrl+Alt+Shift+F11 shortcut previewed Preview B; clicking
+   the panel after moving focus still used its retained display selection.
+7. Across the preview-only interval, main track, playlist contents and queue
+   snapshots stayed unchanged; main volume/output settings did not change; and
+   signal spies/subscriptions saw zero main play/pause/stop, seek, play-state,
+   track/play-count, device/output or volume/output-setting events.
+
+The final run printed `HEADPHONES SAME-PROCESS PASS` with **85,207 main output
+frames** and exited status 0 with clean Headphones/Vim shutdown. This establishes
+same-process host/UI/engine coexistence on the documented software backend. It is
+not physical PipeWire disconnect/leak-free routing acceptance; the Phase 3
+limitation remains recorded and requires separate hardware/backend work.

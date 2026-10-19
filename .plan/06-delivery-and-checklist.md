@@ -65,17 +65,22 @@ testing its runtime dependency resolution and licence obligations.
 
 - [x] QAudioSink format negotiation, streaming conversion, device selection,
   output pumping, drain/reset/position/volume behaviour.
-- [ ] Two-device Linux playback proof before polishing the complete UI.
+- [x] Two-device Linux playback proof before polishing the complete UI.
 
-  Phase 3 software/null-sink checks passed, but Qt 6.8.2/PulseAudio 17 removal
-  notifications/rerouting failed isolation. Physical PipeWire validation and a
-  suitable backend/policy remain open; see the Phase 3 evidence.
+  User-reported physical main A/Bluetooth B playback/disconnect works with
+  WirePlumber's `linking.pause-playback` disabled. The separate Qt 6.8.2/PulseAudio
+  17 null-sink failure remains documented. Exact environment details and wider
+  physical coverage remain Phase 5 validation; see the Phase 3 evidence.
 
 ### M4: complete user workflow
 
-- [ ] Public selection/context-menu/shortcut integration, preview widget,
+- [x] Public selection/context-menu/shortcut integration, preview widget,
   settings provider, persistence, and clear missing-device state.
-- [ ] UI/integration tests plus coexistence check with Vim Motions.
+- [x] UI/integration tests plus coexistence check with Vim Motions.
+
+  Verified through the actual loaded plugin and real main engine in one fooyin
+  process using explicit software sinks. The subsequent physical Bluetooth result
+  is recorded in Phase 3; wider hardware coverage remains Phase 5 work.
 
 ### M5: first-release readiness
 

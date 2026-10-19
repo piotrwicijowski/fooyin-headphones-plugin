@@ -21,15 +21,19 @@ assembles the end-to-end evidence needed to use the plugin during a party.
 
 ## Suggested automated suites
 
-Current Phase 3 baseline: `headphones.plugin-lifecycle`,
+Current Phase 4 baseline: `headphones.plugin-lifecycle`,
 `headphones.preview-engine`, `headphones.preview-source`,
-`headphones.preview-converter`, and `headphones.preview-output` are implemented
+`headphones.preview-converter`, `headphones.preview-output`, and `headphones.gui` are implemented
 and registered with CTest. They cover transport, gated cancellation, segment/seek
 samples, loader ownership, streaming conversion, fake sink/catalogue policy,
-device/volume persistence, and shutdown. Device catalogue coverage is included in
-the output suite. `previewaudiosmoke` is an explicit-device optional executable,
-not a default CTest. UI suites extend this foundation in Phase 4; see Phases 2–3
-for evidence, including the failed real software-backend disconnect assertion.
+device/volume persistence, UI integration, and shutdown. Device catalogue coverage
+is included in the output suite. The primary opt-in integration path is the
+included `HeadphonesInProcessDriver` module loaded into the actual matching
+fooyin alongside the actual Headphones plugin, exercising main playback and
+registered UI/actions in the same process. It passed with Vim Motions loaded.
+`previewaudiosmoke` remains only a low-level explicit-device diagnostic, not a
+main-player acceptance test. See Phases 2–4 for evidence, including the unresolved
+real software-backend disconnect assertion from Phase 3.
 
 ### `previewcontrollertest.cpp`
 

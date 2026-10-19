@@ -1,12 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "headphonesplugin.h"
 
+#include "headphonesactions.h"
 #include "headphoneslog.h"
 #include "headphonessettings.h"
+#include "headphonessettingsdialog.h"
+#include "headphoneswidget.h"
 #include "previewcontroller.h"
 #include "qtaudiooutput.h"
 
 #include <QCoreApplication>
+
+#include <gui/guiconstants.h>
+#include <gui/trackselectioncontroller.h>
+#include <gui/widgetprovider.h>
+#include <utils/actions/actionmanager.h>
+
+#include <algorithm>
+
+using namespace Qt::StringLiterals;
 
 namespace Fooyin::Headphones {
 
@@ -54,7 +66,7 @@ void HeadphonesPlugin::initialise(const CorePluginContext& context)
     qCDebug(HEADPHONES) << "Core initialised";
 }
 
-void HeadphonesPlugin::initialise(const GuiPluginContext& /*context*/)
+void HeadphonesPlugin::initialise(const GuiPluginContext& context)
 {
     if(m_shutdown || m_guiInitialised) {
         return;
@@ -67,7 +79,62 @@ void HeadphonesPlugin::initialise(const GuiPluginContext& /*context*/)
     m_guiInitialised = true;
     m_devices        = std::make_unique<HeadphoneDevices>();
     applyOutputDevice();
+    m_settingsUi = std::make_shared<HeadphonesSettingsProvider>(*m_preferences, *m_devices);
+    m_actions    = std::make_unique<HeadphonesActions>(*m_controller, context.actionManager);
+    if(context.trackSelection) {
+        const QPointer<TrackSelectionController> selection {context.trackSelection};
+        const QPointer<HeadphonesActions> actions {m_actions.get()};
+        const auto syncSelection = [selection, actions]() {
+            if(selection && actions) {
+                actions->setSelection(selection->selectedTracks(), selection->displayTracks());
+            }
+        };
+        connect(selection, &TrackSelectionController::selectionChanged, m_actions.get(), syncSelection);
+        connect(selection, &TrackSelectionController::displaySelectionChanged, m_actions.get(), syncSelection);
+        if(context.actionManager) {
+            connect(context.actionManager, &ActionManager::contextChanged, m_actions.get(), syncSelection);
+        }
+        selection->registerTrackContextAction(
+            m_actions.get(), TrackContextMenuArea::Track, Constants::Menus::Context::TrackSelection,
+            "Headphones.PreviewSelected", tr("Preview in headphones"),
+            [actions](QMenu* menu, const TrackSelection& tracks) {
+                if(actions) {
+                    actions->renderMenu(menu, tracks);
+                }
+            },
+            Constants::Menus::Context::TrackFinalSeparator);
+        syncSelection();
+    }
+    m_widgets = std::make_shared<std::vector<QPointer<HeadphonesWidget>>>();
+    if(context.widgetProvider) {
+        const QPointer<PreviewController> controller {m_controller.get()};
+        const QPointer<HeadphonesActions> actions {m_actions.get()};
+        const QPointer<HeadphonesSettings> preferences {m_preferences.get()};
+        const QPointer<HeadphoneDeviceCatalogue> devices {m_devices.get()};
+        const std::weak_ptr<HeadphonesSettingsProvider> provider {m_settingsUi};
+        const std::weak_ptr<std::vector<QPointer<HeadphonesWidget>>> widgets {m_widgets};
+        context.widgetProvider->registerWidget(
+            u"HeadphonesPreview"_s,
+            [controller, actions, preferences, devices, provider, widgets]() -> FyWidget* {
+                const auto owners = widgets.lock();
+                if(!owners || !controller || !actions || !preferences || !devices) {
+                    return nullptr;
+                }
+                std::erase_if(*owners, [](const auto& widget) { return widget.isNull(); });
+                auto* widget = new HeadphonesWidget(*controller, *actions, *preferences, *devices, provider);
+                owners->push_back(widget);
+                return widget;
+            },
+            tr("Headphones Preview"));
+        context.widgetProvider->setSubMenus(u"HeadphonesPreview"_s, {tr("Playback")});
+        context.widgetProvider->setLimit(u"HeadphonesPreview"_s, 1);
+    }
     qCDebug(HEADPHONES) << "GUI initialised";
+}
+
+std::unique_ptr<PluginSettingsProvider> HeadphonesPlugin::settingsProvider() const
+{
+    return settingsProviderAdapter(m_settingsUi);
 }
 
 void HeadphonesPlugin::applyOutputDevice()
@@ -91,6 +158,14 @@ void HeadphonesPlugin::shutdown()
     }
 
     m_shutdown = true;
+    if(m_widgets) {
+        for(const auto& widget : *m_widgets) {
+            delete widget.data();
+        }
+        m_widgets.reset();
+    }
+    m_settingsUi.reset();
+    m_actions.reset();
     if(m_controller) {
         m_controller->shutdown();
         m_controller.reset();

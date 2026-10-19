@@ -1,9 +1,12 @@
 # Headphones preview plugin: implementation plan
 
-Status: Phases 1–2 complete. Phase 3 output/conversion/device software is
-implemented and software-backend tested; physical PipeWire main/headphone
-validation remains open, with a Qt 6.8.2 PulseAudio loss/rerouting failure recorded.
-Phase 4 UI/actions is the next unimplemented software phase.
+Status: Phases 1–4 software implemented, including the actual loaded plugin's
+same-process coexistence test with fooyin main playback and Vim Motions. Phase 5
+validation and Phase 6 installed-SDK/delivery checks remain. A user confirmed
+physical main-A/Bluetooth-preview-B disconnect behavior after disabling
+WirePlumber's `linking.pause-playback` policy. Exact environment details and wider
+hardware coverage remain open; the distinct Qt 6.8.2/PulseAudio null-sink failure
+remains recorded and is not resolved by Phase 4.
 
 ## Goal and confirmed decisions
 

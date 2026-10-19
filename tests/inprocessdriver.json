@@ -1,0 +1,7 @@
+{
+    "Name": "Headphones same-process validation driver",
+    "Author": "",
+    "Version": "0.1.0",
+    "Category": "Testing",
+    "Description": "Opt-in public-API driver for the actual Headphones plugin and fooyin main player"
+}
