@@ -12,13 +12,17 @@
 #include <memory>
 #include <vector>
 
+namespace Fooyin {
+class FyWidget;
+class SettingsManager;
+}
+
 namespace Fooyin::Headphones {
 
 class PreviewController;
 class HeadphoneDevices;
 class HeadphonesSettings;
 class HeadphonesActions;
-class HeadphonesWidget;
 class HeadphonesSettingsProvider;
 
 class HeadphonesPlugin : public QObject,
@@ -47,7 +51,8 @@ private:
     std::unique_ptr<PreviewController> m_controller;
     std::unique_ptr<HeadphonesActions> m_actions;
     std::shared_ptr<HeadphonesSettingsProvider> m_settingsUi;
-    std::shared_ptr<std::vector<QPointer<HeadphonesWidget>>> m_widgets;
+    std::shared_ptr<std::vector<QPointer<FyWidget>>> m_widgets;
+    QPointer<SettingsManager> m_settingsManager;
     QByteArray m_selectedDevice;
     bool m_outputAttached {false};
     bool m_coreInitialised {false};

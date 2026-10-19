@@ -27,6 +27,8 @@ public:
     [[nodiscard]] QString displayPreviewReason() const;
     [[nodiscard]] QAction* playPauseAction() const;
     [[nodiscard]] QAction* stopAction() const;
+    [[nodiscard]] QAction* playAction() const;
+    [[nodiscard]] QAction* pauseAction() const;
 
 Q_SIGNALS:
     void availabilityChanged();

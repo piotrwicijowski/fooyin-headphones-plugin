@@ -61,6 +61,10 @@ set(HEADPHONES_SOURCES
     src/headphoneslog.h)
 add_library(HeadphonesGui STATIC
     src/headphonesactions.h src/headphonesactions.cpp
+    src/headphonescontrolwidget.h src/headphonescontrolwidget.cpp
+    src/headphonesplayercontrol.h src/headphonesplayercontrol.cpp
+    src/headphonesseekbar.h src/headphonesseekbar.cpp
+    src/headphonesvolumecontrol.h src/headphonesvolumecontrol.cpp
     src/headphoneswidget.h src/headphoneswidget.cpp
     src/headphonessettingsdialog.h src/headphonessettingsdialog.cpp)
 set_target_properties(HeadphonesGui PROPERTIES

@@ -16,7 +16,8 @@ using namespace Qt::StringLiterals;
 namespace Fooyin::Headphones {
 namespace {
 constexpr const char* ActionIds[] {"Headphones.PreviewSelected", "Headphones.PlayPause", "Headphones.Stop",
-                                   "Headphones.SeekBackward", "Headphones.SeekForward"};
+                                   "Headphones.SeekBackward", "Headphones.SeekForward", "Headphones.Play",
+                                   "Headphones.Pause"};
 }
 
 HeadphonesActions::HeadphonesActions(PreviewController& controller, ActionManager* manager)
@@ -25,7 +26,8 @@ HeadphonesActions::HeadphonesActions(PreviewController& controller, ActionManage
 {
     const QStringList labels {tr("Preview in headphones"), tr("Play/pause headphone preview"),
                               tr("Stop headphone preview"), tr("Seek headphone preview backward"),
-                              tr("Seek headphone preview forward")};
+                              tr("Seek headphone preview forward"), tr("Play headphone preview"),
+                              tr("Pause headphone preview")};
     for(int i = 0; i < labels.size(); ++i) {
         auto* action = new QAction(labels[i], this);
         action->setObjectName(QString::fromLatin1(ActionIds[i]));
@@ -47,6 +49,21 @@ HeadphonesActions::HeadphonesActions(PreviewController& controller, ActionManage
     connect(m_actions[2], &QAction::triggered, &m_controller, &PreviewController::stop);
     connect(m_actions[3], &QAction::triggered, this, [this]() { seekBy(-5000); });
     connect(m_actions[4], &QAction::triggered, this, [this]() { seekBy(5000); });
+    connect(playAction(), &QAction::triggered, this, [this]() {
+        const auto snapshot = m_controller.snapshot();
+        if(snapshot.pauseRequested || snapshot.state == PreviewState::Stopped || snapshot.state == PreviewState::Error) {
+            m_controller.playPause();
+        }
+        else {
+            m_controller.previewTrack(snapshot.track);
+        }
+    });
+    connect(pauseAction(), &QAction::triggered, this, [this]() {
+        const auto snapshot = m_controller.snapshot();
+        if(!snapshot.pauseRequested && snapshot.state != PreviewState::Stopped && snapshot.state != PreviewState::Error) {
+            m_controller.playPause();
+        }
+    });
     connect(&m_controller, &PreviewController::snapshotChanged, this, [this]() { updateActions(); });
     updateActions();
 }
@@ -86,6 +103,16 @@ QAction* HeadphonesActions::playPauseAction() const
 QAction* HeadphonesActions::stopAction() const
 {
     return m_actions[2];
+}
+
+QAction* HeadphonesActions::playAction() const
+{
+    return m_actions[5];
+}
+
+QAction* HeadphonesActions::pauseAction() const
+{
+    return m_actions[6];
 }
 
 void HeadphonesActions::setSelection(TrackList focused, TrackList display)
@@ -138,6 +165,8 @@ void HeadphonesActions::updateActions()
     m_actions[2]->setEnabled(active || snapshot.state == PreviewState::Error || snapshot.positionMs != 0);
     m_actions[3]->setEnabled(active && snapshot.seekable);
     m_actions[4]->setEnabled(active && snapshot.seekable);
+    playAction()->setEnabled(m_actions[1]->isEnabled());
+    pauseAction()->setEnabled(active);
     Q_EMIT availabilityChanged();
 }
 

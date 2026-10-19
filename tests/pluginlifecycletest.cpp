@@ -172,10 +172,25 @@ private Q_SLOTS:
         guiServices.actionManager  = &actions;
         guiServices.widgetProvider = widgets.get();
         gui->initialise(guiServices);
+        const auto catalogue = widgets->widgetCatalogue();
+        QCOMPARE(catalogue.size(), size_t {4});
+        for(const auto& entry : catalogue) {
+            QCOMPARE(entry.categories, QStringList {u"Headphones plugin"_s});
+        }
         QVERIFY(widgets->widgetExists(u"HeadphonesPreview"_s));
         auto* panel = widgets->createWidget(u"HeadphonesPreview"_s);
         QVERIFY(panel);
         QVERIFY(!widgets->createWidget(u"HeadphonesPreview"_s));
+        const QStringList controlIds {u"HeadphonesPlayerControls"_s, u"HeadphonesSeekBar"_s,
+                                       u"HeadphonesVolumeControls"_s};
+        std::vector<QPointer<FyWidget>> controls;
+        for(const auto& id : controlIds) {
+            QVERIFY(widgets->widgetExists(id));
+            auto* control = widgets->createWidget(id);
+            QVERIFY(control);
+            QCOMPARE(control->layoutName(), id);
+            controls.emplace_back(control);
+        }
         auto* command = actions.command("Headphones.PreviewSelected");
         QVERIFY(command);
         QVERIFY(command->defaultShortcuts().isEmpty());
@@ -206,6 +221,12 @@ private Q_SLOTS:
         QPointer<QWidget> recreated {panel};
         plugin->shutdown();
         QVERIFY(recreated.isNull());
+        for(const auto& control : controls) {
+            QVERIFY(control.isNull());
+        }
+        for(const auto& id : controlIds) {
+            QVERIFY(!widgets->createWidget(id));
+        }
         QVERIFY(!actions.command("Headphones.PreviewSelected"));
         QVERIFY(!widgets->createWidget(u"HeadphonesPreview"_s));
         provider.reset();

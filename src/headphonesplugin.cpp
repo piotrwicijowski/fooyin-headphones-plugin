@@ -3,8 +3,11 @@
 
 #include "headphonesactions.h"
 #include "headphoneslog.h"
+#include "headphonesplayercontrol.h"
+#include "headphonesseekbar.h"
 #include "headphonessettings.h"
 #include "headphonessettingsdialog.h"
+#include "headphonesvolumecontrol.h"
 #include "headphoneswidget.h"
 #include "previewcontroller.h"
 #include "qtaudiooutput.h"
@@ -15,6 +18,7 @@
 #include <gui/trackselectioncontroller.h>
 #include <gui/widgetprovider.h>
 #include <utils/actions/actionmanager.h>
+#include <utils/settings/settingsmanager.h>
 
 #include <algorithm>
 
@@ -43,8 +47,9 @@ void HeadphonesPlugin::initialise(const CorePluginContext& context)
         return;
     }
 
-    m_preferences = std::make_unique<HeadphonesSettings>(context.settingsManager);
-    m_controller  = std::make_unique<PreviewController>(makePreviewSourceFactory(context.audioLoader), nullptr);
+    m_settingsManager = context.settingsManager;
+    m_preferences     = std::make_unique<HeadphonesSettings>(context.settingsManager);
+    m_controller      = std::make_unique<PreviewController>(makePreviewSourceFactory(context.audioLoader), nullptr);
     m_controller->setVolume(m_preferences->volume());
     QObject::connect(m_preferences.get(), &HeadphonesSettings::deviceChanged, this, [this]() {
         if(!m_shutdown) {
@@ -105,14 +110,14 @@ void HeadphonesPlugin::initialise(const GuiPluginContext& context)
             Constants::Menus::Context::TrackFinalSeparator);
         syncSelection();
     }
-    m_widgets = std::make_shared<std::vector<QPointer<HeadphonesWidget>>>();
+    m_widgets = std::make_shared<std::vector<QPointer<FyWidget>>>();
     if(context.widgetProvider) {
         const QPointer<PreviewController> controller {m_controller.get()};
         const QPointer<HeadphonesActions> actions {m_actions.get()};
         const QPointer<HeadphonesSettings> preferences {m_preferences.get()};
         const QPointer<HeadphoneDeviceCatalogue> devices {m_devices.get()};
         const std::weak_ptr<HeadphonesSettingsProvider> provider {m_settingsUi};
-        const std::weak_ptr<std::vector<QPointer<HeadphonesWidget>>> widgets {m_widgets};
+        const std::weak_ptr<std::vector<QPointer<FyWidget>>> widgets {m_widgets};
         context.widgetProvider->registerWidget(
             u"HeadphonesPreview"_s,
             [controller, actions, preferences, devices, provider, widgets]() -> FyWidget* {
@@ -126,8 +131,37 @@ void HeadphonesPlugin::initialise(const GuiPluginContext& context)
                 return widget;
             },
             tr("Headphones Preview"));
-        context.widgetProvider->setSubMenus(u"HeadphonesPreview"_s, {tr("Playback")});
+        context.widgetProvider->setSubMenus(u"HeadphonesPreview"_s, {tr("Headphones plugin")});
         context.widgetProvider->setLimit(u"HeadphonesPreview"_s, 1);
+
+        const auto registerControl = [widgetProvider = context.widgetProvider, widgets, controller](
+                                         const QString& id, const QString& name, auto create) {
+            widgetProvider->registerWidget(id, [widgets, controller, create]() -> FyWidget* {
+                const auto owners = widgets.lock();
+                if(!owners || !controller) {
+                    return nullptr;
+                }
+                std::erase_if(*owners, [](const auto& widget) { return widget.isNull(); });
+                auto* widget = create();
+                if(widget) {
+                    owners->push_back(widget);
+                }
+                return widget;
+            }, name);
+            widgetProvider->setSubMenus(id, {tr("Headphones plugin")});
+        };
+        const auto settings = m_settingsManager;
+        registerControl(u"HeadphonesPlayerControls"_s, tr("Headphones Player Controls"),
+                        [controller, actions, settings]() -> FyWidget* {
+                            return actions ? new HeadphonesPlayerControl(*controller, *actions, settings) : nullptr;
+                        });
+        registerControl(u"HeadphonesSeekBar"_s, tr("Headphones Seekbar"), [controller, settings]() -> FyWidget* {
+            return new HeadphonesSeekBar(*controller, settings);
+        });
+        registerControl(u"HeadphonesVolumeControls"_s, tr("Headphones Volume Controls"),
+                        [controller, settings]() -> FyWidget* {
+                            return new HeadphonesVolumeControl(*controller, settings);
+                        });
     }
     qCDebug(HEADPHONES) << "GUI initialised";
 }
@@ -172,6 +206,7 @@ void HeadphonesPlugin::shutdown()
     }
     m_devices.reset();
     m_preferences.reset();
+    m_settingsManager.clear();
     m_guiInitialised  = false;
     m_coreInitialised = false;
     qCDebug(HEADPHONES) << "Shutdown complete";

@@ -206,10 +206,18 @@ void PreviewController::setVolume(double volume)
         return;
     }
     m_snapshot.volume = std::clamp(volume, 0.0, 1.0);
+    if(m_snapshot.volume > 0.0) {
+        m_unmutedVolume = m_snapshot.volume;
+    }
     if(m_output) {
         m_output->setVolume(m_snapshot.volume);
     }
     publish();
+}
+
+void PreviewController::toggleMute()
+{
+    setVolume(m_snapshot.volume > 0.0 ? 0.0 : m_unmutedVolume);
 }
 
 void PreviewController::setOutput(std::unique_ptr<PreviewOutput> output)

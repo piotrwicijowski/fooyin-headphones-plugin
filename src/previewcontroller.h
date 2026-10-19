@@ -30,6 +30,7 @@ public:
     void stop();
     bool seek(int64_t relativeMs);
     void setVolume(double volume);
+    void toggleMute();
     void setOutput(std::unique_ptr<PreviewOutput> output);
     void refreshOutput();
     void shutdown();
@@ -60,6 +61,7 @@ private:
     bool m_outputConfigured {false};
     bool m_outputStarted {false};
     bool m_shutdown {false};
+    double m_unmutedVolume {0.25};
 };
 
 } // namespace Fooyin::Headphones

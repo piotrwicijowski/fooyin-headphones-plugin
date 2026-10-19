@@ -18,7 +18,7 @@ Motions. See [same-process validation](#same-process-integration-validation) and
 1. Select the main device explicitly in fooyin's playback/output settings.
 2. In fooyin's plugin settings, select **Headphones Preview → Configure**, then
    choose a different, separately addressable headphone device and apply it.
-3. Enable layout editing and add **Playback → Headphones Preview**. The panel is
+3. Enable layout editing and add **Headphones plugin → Headphones Preview**. The panel is
    limited to one active layout instance.
 4. Select a track and invoke **Preview in headphones** from its track context
    menu, or click **Preview selected** in the panel.
@@ -39,6 +39,34 @@ have no enabled seek slider. Dragging shows a tentative position and sends one
 seek on release; a paused preview stays paused. Closing/recreating the layout
 panel does not stop preview; registered shortcuts remain usable without a panel.
 
+### Separate layout widgets
+
+Layout editing also provides three independently placeable widgets under **Headphones plugin**:
+
+| Widget | Right-click configuration |
+| --- | --- |
+| **Headphones Player Controls** | Show/hide Stop, Pause, Play, and Play/Pause individually; Automatic, Horizontal, or Vertical orientation |
+| **Headphones Seekbar** | Show labels, show remaining time, and orientation |
+| **Headphones Volume Controls** | Show/hide the slider and mute icon; orientation |
+
+Each instance saves its configuration with the layout. All instances control the
+same headphone preview, including the original **Headphones Preview** panel,
+which still contains its existing controls. The new player controls use fooyin's
+standard tool-button styling and icons. Click anywhere on the new seekbar to
+seek to that position, or drag and release; right-click during a drag cancels it.
+Paused previews stay paused after seeking. The seekbar has no played/scrobble
+threshold marker. Click its total-time label to toggle remaining time.
+
+The separate volume slider sets volume directly at the clicked position. The
+icon mutes/unmutes the preview, restoring the last nonzero headphone volume.
+With only the icon enabled, hovering over it reveals a vertical volume slider.
+At least one of the volume slider or icon must remain enabled.
+
+The separate Play and Pause buttons are hidden by default. Enable **Show Play**
+and **Show Pause** in the player controls' right-click menu. Like fooyin's main
+controls, Play starts/resumes the retained preview or restarts it when already
+playing; Pause pauses it without toggling back to playback on repeated clicks.
+
 ### Configurable commands
 
 Assign shortcuts in fooyin's normal shortcut settings under **Headphones Preview**.
@@ -49,6 +77,8 @@ and Vim Motions.
 | --- | --- |
 | `Headphones.PreviewSelected` | Preview in headphones |
 | `Headphones.PlayPause` | Play/pause headphone preview |
+| `Headphones.Play` | Play headphone preview |
+| `Headphones.Pause` | Pause headphone preview |
 | `Headphones.Stop` | Stop headphone preview |
 | `Headphones.SeekBackward` | Seek headphone preview backward 5 seconds |
 | `Headphones.SeekForward` | Seek headphone preview forward 5 seconds |
