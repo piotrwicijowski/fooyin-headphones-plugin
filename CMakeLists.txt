@@ -33,6 +33,10 @@ find_package(Threads REQUIRED)
 add_library(HeadphonesPreviewEngine STATIC
     src/previewtypes.h
     src/previewoutput.h
+    src/previewconverter.h src/previewconverter.cpp
+    src/headphonedevices.h src/headphonedevices.cpp
+    src/headphonessettings.h src/headphonessettings.cpp
+    src/qtaudiooutput.h src/qtaudiooutput.cpp
     src/previewpcmbuffer.h src/previewpcmbuffer.cpp
     src/previewsource.h src/previewsource.cpp
     src/previewdecoderworker.h src/previewdecoderworker.cpp
@@ -42,7 +46,8 @@ set_target_properties(HeadphonesPreviewEngine PROPERTIES
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES)
 target_include_directories(HeadphonesPreviewEngine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(HeadphonesPreviewEngine PUBLIC Fooyin::Core Qt6::Core Threads::Threads)
+target_link_libraries(HeadphonesPreviewEngine PUBLIC Fooyin::Core Qt6::Core Qt6::Multimedia Threads::Threads
+    PRIVATE Headphones::swresample Headphones::avutil)
 target_compile_definitions(HeadphonesPreviewEngine PUBLIC QT_NO_KEYWORDS)
 if(MSVC)
     target_compile_options(HeadphonesPreviewEngine PRIVATE /W4)

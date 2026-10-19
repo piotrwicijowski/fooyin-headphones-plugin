@@ -219,6 +219,7 @@ struct OutputState
     qint64 maxWrite {std::numeric_limits<qint64>::max()};
     QString failure;
     AudioFormat format;
+    std::optional<AudioFormat> negotiatedFormat;
     std::vector<std::byte> stream;
     int configurations {0};
     int starts {0};
@@ -245,12 +246,12 @@ public:
         checkThread();
         return m_state->available;
     }
-    bool configure(const AudioFormat& format, QString&) override
+    std::optional<AudioFormat> configure(const AudioFormat& format, QString&) override
     {
         checkThread();
-        m_state->format = format;
+        m_state->format = m_state->negotiatedFormat.value_or(format);
         ++m_state->configurations;
-        return !m_state->configureFails;
+        return m_state->configureFails ? std::optional<AudioFormat> {} : m_state->format;
     }
     bool start(QString&) override
     {

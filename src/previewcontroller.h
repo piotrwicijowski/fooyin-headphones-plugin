@@ -43,6 +43,8 @@ private:
     void fail(const QString& error);
     void opened(const std::shared_ptr<PreviewSession>& session, const PreviewSourceInfo& info);
     void pump();
+    void updatePosition();
+    void connectOutput();
     void publish();
     [[nodiscard]] bool active() const;
 
@@ -51,6 +53,7 @@ private:
     std::unique_ptr<PreviewDecoderWorker> m_worker;
     std::shared_ptr<PreviewSession> m_session;
     QTimer m_pump;
+    QTimer m_positionTimer;
     std::vector<std::byte> m_pending;
     size_t m_pendingOffset {0};
     size_t m_prebufferBytes {0};

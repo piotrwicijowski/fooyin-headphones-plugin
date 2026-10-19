@@ -2,6 +2,10 @@
 
 Depends on: [02-session-and-decoding.md](02-session-and-decoding.md).
 
+Status: software implemented and automated/software-output checks passed.
+Physical two-device PipeWire acceptance is pending; the tested Qt 6.8.2
+PulseAudio disconnect policy failed isolation (see evidence below).
+
 ## Explicit device selection
 
 `HeadphoneDevices` owns a GUI-thread `QMediaDevices` instance and publishes
@@ -129,13 +133,114 @@ Avoid making the whole controller depend on a particular Qt-version namespace.
 
 ## Tests and acceptance
 
-- [ ] Converter tests check rate changes, mono/stereo mapping, sample amplitudes,
+- [x] Converter tests check rate changes, mono/stereo mapping, sample amplitudes,
   resampler tail flushing, discontinuities, and bounded memory.
-- [ ] Fake sink tests cover short/zero writes, write errors, pause, underrun,
+- [x] Fake sink tests cover short/zero writes, write errors, pause, underrun,
   draining EOF, immediate reset, and stale QIODevice epochs.
-- [ ] Device tests cover duplicate descriptions, missing IDs, hotplug during
+- [x] Device tests cover duplicate descriptions, missing IDs, hotplug during
   Loading/Playing/Paused, default changes, and no reconnect auto-resume.
-- [ ] Play real MP3/FLAC/WAV inputs at 44.1/48/96 kHz as supported by available
-  decoders and verify correct speed, pitch, level, and channels.
+- [x] Play real MP3/FLAC/WAV inputs at 44.1/48/96 kHz as supported by available
+  decoders and verify frame duration, pitch, level, and channels in output PCM
+  submitted to a real software-backed QAudioSink. Physical listening is pending.
 - [ ] Prove concurrent main/headphone playback on separate PipeWire devices,
   including a disconnect test that checks actual routing.
+
+## Implementation notes
+
+- `HeadphoneDevices` is the Qt implementation of an injectable QObject catalogue.
+  Device IDs are byte-preserving Base64 settings; descriptions are never lookup
+  keys. `QtAudioOutput` resolves the selected ID twice, negotiates only concrete
+  supported Float/S16/S32 mono/stereo formats, and refuses a null/mismatched Qt
+  device in its real sink factory. It never uses the default-device constructor.
+- Worker startup now reports input capabilities, waits for the GUI-negotiated
+  output format, then constructs the streaming converter and output-format PCM
+  queue. The GUI polls readiness without waiting for conversion or decoding.
+- `PreviewConverter` uses public float normalisation and explicitly linked FFmpeg
+  5+ swresample/avutil APIs. Mono duplication uses unity gain in each output;
+  stereo downmix uses `[0.5, 0.5]`. Native matching formats pass through unchanged.
+  Input blocks are limited to 4096 frames, conversion staging to 8 MiB, and EOF
+  tail draining is bounded/idempotent. Segment clipping/preroll happens before
+  conversion; replacing/seeking destroys all old converter state.
+- `PreviewAudioSink` is the narrow injectable boundary behind the actual explicit
+  QAudioSink. Reset invalidates the QIODevice pointer before backend calls.
+  Sink state/error enums stay within the adapter (QAudio before Qt 6.7, QtAudio
+  thereafter). Underrun is recoverable; EOF additionally requires worker/tail,
+  queue, pending-write, and actual sink Idle completion. Position uses processed
+  output time, frozen during pause, capped by submitted audio, and reset per epoch.
+- Pumping remains 10 ms; position snapshots use a separate 100 ms timer. The
+  requested sink buffer is 100 ms, the queue 500 ms and startup reserve 40 ms.
+  Backend-adjusted buffer size is queryable and is tested.
+- `HeadphonesSettings` registers device ID, description, and normalised UI volume
+  with public SettingsManager. Defaults are empty device/25% UI volume. The plugin
+  wires selection changes to stopped output replacement, subscribes volume in
+  both directions, and creates device enumeration/output on GUI initialisation.
+  Same-ID updates do not interrupt preview. No startup/reconnect/settings apply
+  starts audio. The actual dialog/widget remains Phase 4.
+- Volume uses Qt's logarithmic-to-linear conversion before QAudioSink stream gain;
+  neither main/system volume nor main DSP/ReplayGain is changed.
+
+## Verification evidence (2026-10-18)
+
+- Matching baseline: fooyin `bb8d9f037`/0.13.1, Debian 13 x86_64, GCC 14.2.0,
+  Qt 6.8.2, FFmpeg swresample 5.3.100/avutil 59.39.100. Existing sibling
+  `build-rebase-agent` and the staged Multimedia prefix from Phase 1 were reused.
+- `make -j4 check PLUGIN_CONFIG_PRESET=agent
+  FOOYIN_BUILD_DIR=/workspace/fooyin/build-rebase-agent
+  CMAKE_ARGS=-DQt6Multimedia_DIR=/tmp/opencode/headphones-deps/root/usr/lib/x86_64-linux-gnu/cmake/Qt6Multimedia
+  TEST_ARGS=-V` passed all five CTest suites (9 lifecycle + 39 engine + 6 source
+  + 14 converter + 13 output = 81 Qt Test checks, including suite setup/cleanup).
+  Tests pass without an audio server. Debug and RelWithDebInfo plugin builds passed.
+- New converter tests verify U8/S16/S24In32/S32/F32/F64 amplitudes, stereo/mono
+  gains, integer scaling, 44.1↔48 and 96→48 kHz frequency/continuity, output frame
+  counts, EOF tail once, reset without old tail, and bounded invalid/extreme input.
+  Engine integration verifies converted segment duration and post-seek samples.
+- Sink/catalogue tests verify explicit IDs with duplicate descriptions, no factory
+  call for missing IDs, re-resolution after configuration, no real factory for a
+  null Qt device, unrelated/default-order changes, reported device loss during
+  Loading/Buffering/Playing/Paused/Draining, and no reconnect autoplay. Tests also
+  exercise partial-frame/zero writes, QIODevice destruction/reset epochs, backend
+  failure/recovery, requested/actual buffer sizes, paused processed clocks, underrun
+  versus EOF, opaque-ID persistence, and logarithmic UI volume.
+- `previewaudiosmoke` is built with tests but is not part of CTest. It requires
+  `--device-id BASE64_ID`, or only lists IDs via `--list-devices`. A real explicit
+  Qt sink completed a generated one-second tone on a PulseAudio 17 null sink.
+- No `/dev/snd`, PipeWire daemon, or physical output devices are available in this
+  container. PulseAudio 17/FFmpeg tools and their missing dependencies were
+  extracted under `/tmp/opencode/headphones-audio-deps`, with an isolated server
+  socket/config under `/tmp/opencode/headphones-pulse`; no system installation.
+  The server had two named software sinks, `main` and `headphones`.
+- A temporary public-API probe inside matching fooyin used its registered decoder
+  and this engine's actual QAudioSink adapter. A test catalogue constrained the
+  real selected device to supported 48 kHz stereo Float, forcing application SRC
+  for non-48 kHz sources. Generated 250 ms 440 Hz left/880 Hz right fixtures passed:
+  MP3/FLAC/WAV at 44.1/48 kHz, FLAC/WAV at 96 kHz (MP3 does not support 96 kHz).
+  All eight produced exactly 12,000 output frames; per-channel spectral amplitude
+  checks before sink volume matched 0.2/0.1 within 10% (including lossy MP3).
+  Actual sink buffer was 26,880 bytes (70 ms), adjusted from the 100 ms request.
+  Elapsed startup+play+drain was 943–2213 ms in the isolated null backend; these
+  numbers do not establish interactive hardware latency. Host exited normally.
+- A second test ran two explicit Qt streams simultaneously. Server stream
+  inspection confirmed separate software sink IDs 0 and 1. Removing the selected
+  headphone sink exposed the failure below. This is **not** proof of physical
+  output isolation or coexistence with fooyin's main PlayerController.
+- Formatting and whitespace checks passed. Installed SDK, Qt 6.4 runtime,
+  other platforms, physical listening, and actual PipeWire main/headphone
+  coexistence/disconnect validation remain open.
+
+### Observed Qt 6.8.2/PulseAudio 17 disconnect failure
+
+The server moved the headphone stream to the main sink after the software sink
+was removed. The headphone process kept playing to natural EOF instead of
+receiving a missing-device error. Its Qt catalogue still advertised the old ID;
+the server-side move was observed in `pactl` stream routing. The other stream
+completed normally. The routing test's expected stop assertion therefore failed.
+
+Qt 6.8.2's public API exposes no explicit stream no-move policy or catalogue
+refresh/invalidation operation. Inspection of the Qt backend's
+[`QPulseAudioEngine::eventCallback`](https://github.com/qt/qtmultimedia/blob/v6.8.2/src/multimedia/pulseaudio/qaudioengine_pulse.cpp)
+shows sink removal updates its map without emitting `audioOutputsChanged`,
+leaving the platform cache stale. A suitable Qt/backend notification fix and
+server policy (or a public QAudioSink no-move contract) must be validated before
+claiming leak-free device loss. No private Qt header or platform-specific routing
+dependency has been added to conceal the issue. This tested backend combination
+does not satisfy the first-release physical-isolation acceptance criterion.

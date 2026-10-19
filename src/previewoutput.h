@@ -3,22 +3,26 @@
 
 #include <core/engine/audioformat.h>
 
+#include <QObject>
+
 #include <cstddef>
+#include <optional>
 #include <span>
 
 namespace Fooyin::Headphones {
 
 // All calls, including destruction, belong to the controller's GUI thread.
-// Phase 2 transports native PCM. Phase 3 extends configuration with negotiation
-// and worker-side conversion before introducing a real QAudioSink adapter.
-class PreviewOutput
+// configure() returns the exact PCM format expected by the selected output;
+// conversion to that format is performed on the decoder worker.
+class PreviewOutput : public QObject
 {
+    Q_OBJECT
 public:
-    virtual ~PreviewOutput()                                          = default;
-    [[nodiscard]] virtual bool isAvailable() const                    = 0;
-    virtual bool configure(const AudioFormat& format, QString& error) = 0;
-    virtual bool start(QString& error)                                = 0;
-    virtual void setPaused(bool paused)                               = 0;
+    virtual ~PreviewOutput()                                                                = default;
+    [[nodiscard]] virtual bool isAvailable() const                                          = 0;
+    virtual std::optional<AudioFormat> configure(const AudioFormat& format, QString& error) = 0;
+    virtual bool start(QString& error)                                                      = 0;
+    virtual void setPaused(bool paused)                                                     = 0;
     virtual void reset()                                  = 0; // Immediate discard, never synchronous draining.
     virtual void setVolume(double volume)                 = 0;
     [[nodiscard]] virtual qint64 bytesFree() const        = 0;
@@ -26,6 +30,9 @@ public:
     [[nodiscard]] virtual bool drained() const            = 0;
     [[nodiscard]] virtual uint64_t processedMs() const    = 0;
     [[nodiscard]] virtual QString error() const           = 0;
+
+Q_SIGNALS:
+    void availabilityChanged();
 };
 
 } // namespace Fooyin::Headphones

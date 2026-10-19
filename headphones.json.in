@@ -3,7 +3,7 @@
     "Version": "@PROJECT_VERSION@",
     "Author": "",
     "Category": "Playback",
-    "Description": "Independent headphone preview (headless engine development)",
+    "Description": "Independent headphone preview output engine (UI in development)",
     "License": "GPL-3.0-or-later",
     "Url": ""
 }

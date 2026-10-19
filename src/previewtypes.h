@@ -25,7 +25,7 @@ struct PreviewSnapshot
     uint64_t generation {0};
     uint64_t positionMs {0};
     uint64_t durationMs {0}; // Zero means unknown.
-    double volume {0.25}; // Linear stream gain; UI mapping belongs to Phase 3.
+    double volume {0.25}; // Normalised logarithmic UI volume; adapter maps to stream gain.
     bool deviceAvailable {false};
     bool seekable {false};
     bool pauseRequested {false};

@@ -369,6 +369,37 @@ private Q_SLOTS:
         QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Stopped);
     }
 
+    void convertedSegmentsAndSeekDiscardResamplerHistory()
+    {
+        PreviewHarness h;
+        auto plan                  = h.add(u"converted.wav"_s);
+        h.output->negotiatedFormat = AudioFormat {SampleFormat::F32, 48000, 2};
+        h.create();
+        Track track {u"converted.wav"_s};
+        track.setOffset(100);
+        track.setDuration(71);
+        track.setCuePath(u"fixture.cue"_s);
+        h.controller->previewTrack(track);
+        QTRY_COMPARE(h.output->stream.size(), size_t {3408 * 8});
+        for(size_t frame = 128; frame + 128 < 3408; frame += 16) {
+            float left {}, right {};
+            std::memcpy(&left, h.output->stream.data() + frame * 8, 4);
+            std::memcpy(&right, h.output->stream.data() + frame * 8 + 4, 4);
+            QVERIFY(std::abs(left - static_cast<float>((100.0 + frame / 48.0) / 32768)) < 1.0F / 32768);
+            QCOMPARE(left, right);
+        }
+        h.controller->playPause();
+        QVERIFY(h.controller->seek(40));
+        QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Paused);
+        QVERIFY(h.output->stream.empty());
+        h.controller->playPause();
+        QTRY_COMPARE(h.output->stream.size(), size_t {1488 * 8});
+        float first {};
+        std::memcpy(&first, h.output->stream.data(), 4);
+        QVERIFY(std::abs(first - 140.0F / 32768) < 1.0F / 32768);
+        QCOMPARE(h.controller->snapshot().positionMs, uint64_t {40});
+    }
+
     void stereoPcmSurvivesPartialFrameWrites()
     {
         PreviewHarness h;

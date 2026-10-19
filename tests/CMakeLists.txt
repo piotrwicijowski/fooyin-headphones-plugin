@@ -16,3 +16,17 @@ add_executable(previewsourcetest previewsourcetest.cpp fakes/previewfakes.h)
 target_link_libraries(previewsourcetest PRIVATE HeadphonesPreviewEngine Qt6::Test)
 add_test(NAME headphones.preview-source COMMAND previewsourcetest)
 set_tests_properties(headphones.preview-source PROPERTIES TIMEOUT 30)
+
+add_executable(previewconvertertest previewconvertertest.cpp)
+target_link_libraries(previewconvertertest PRIVATE HeadphonesPreviewEngine Qt6::Test)
+add_test(NAME headphones.preview-converter COMMAND previewconvertertest)
+set_tests_properties(headphones.preview-converter PROPERTIES TIMEOUT 30)
+
+add_executable(previewoutputtest previewoutputtest.cpp fakes/audiosinkfakes.h fakes/previewfakes.h)
+target_link_libraries(previewoutputtest PRIVATE HeadphonesPreviewEngine Qt6::Test)
+add_test(NAME headphones.preview-output COMMAND previewoutputtest)
+set_tests_properties(headphones.preview-output PROPERTIES TIMEOUT 30)
+
+# Deliberately not registered with CTest: a real sink requires an explicit ID.
+add_executable(previewaudiosmoke previewaudiosmoke.cpp)
+target_link_libraries(previewaudiosmoke PRIVATE HeadphonesPreviewEngine)

@@ -2,7 +2,9 @@
 #include "headphonesplugin.h"
 
 #include "headphoneslog.h"
+#include "headphonessettings.h"
 #include "previewcontroller.h"
+#include "qtaudiooutput.h"
 
 #include <QCoreApplication>
 
@@ -29,9 +31,25 @@ void HeadphonesPlugin::initialise(const CorePluginContext& context)
         return;
     }
 
-    // One shared session service; the real explicitly-selected output is wired
-    // in Phase 3. An absent output can never fall back to the system default.
-    m_controller      = std::make_unique<PreviewController>(makePreviewSourceFactory(context.audioLoader), nullptr);
+    m_preferences = std::make_unique<HeadphonesSettings>(context.settingsManager);
+    m_controller  = std::make_unique<PreviewController>(makePreviewSourceFactory(context.audioLoader), nullptr);
+    m_controller->setVolume(m_preferences->volume());
+    QObject::connect(m_preferences.get(), &HeadphonesSettings::deviceChanged, this, [this]() {
+        if(!m_shutdown) {
+            applyOutputDevice();
+        }
+    });
+    QObject::connect(m_preferences.get(), &HeadphonesSettings::volumeChanged, this, [this]() {
+        if(!m_shutdown) {
+            m_controller->setVolume(m_preferences->volume());
+        }
+    });
+    QObject::connect(m_controller.get(), &PreviewController::snapshotChanged, this,
+                     [this](const PreviewSnapshot& snapshot) {
+                         if(!m_shutdown && snapshot.volume != m_preferences->volume()) {
+                             m_preferences->setVolume(snapshot.volume);
+                         }
+                     });
     m_coreInitialised = true;
     qCDebug(HEADPHONES) << "Core initialised";
 }
@@ -47,7 +65,23 @@ void HeadphonesPlugin::initialise(const GuiPluginContext& /*context*/)
     }
 
     m_guiInitialised = true;
+    m_devices        = std::make_unique<HeadphoneDevices>();
+    applyOutputDevice();
     qCDebug(HEADPHONES) << "GUI initialised";
+}
+
+void HeadphonesPlugin::applyOutputDevice()
+{
+    if(!m_devices || !m_controller) {
+        return;
+    }
+    const auto selected = m_preferences->deviceId();
+    if(m_outputAttached && selected == m_selectedDevice) {
+        return;
+    }
+    m_selectedDevice = selected;
+    m_outputAttached = true;
+    m_controller->setOutput(std::make_unique<QtAudioOutput>(*m_devices, selected));
 }
 
 void HeadphonesPlugin::shutdown()
@@ -61,6 +95,8 @@ void HeadphonesPlugin::shutdown()
         m_controller->shutdown();
         m_controller.reset();
     }
+    m_devices.reset();
+    m_preferences.reset();
     m_guiInitialised  = false;
     m_coreInitialised = false;
     qCDebug(HEADPHONES) << "Shutdown complete";

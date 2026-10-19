@@ -1,7 +1,9 @@
 # Headphones preview plugin: implementation plan
 
-Status: Phases 1–2 complete (project/build workflow and headless preview engine).
-Phase 3, QAudioSink output, conversion, and devices, is the next unfinished ticket.
+Status: Phases 1–2 complete. Phase 3 output/conversion/device software is
+implemented and software-backend tested; physical PipeWire main/headphone
+validation remains open, with a Qt 6.8.2 PulseAudio loss/rerouting failure recorded.
+Phase 4 UI/actions is the next unimplemented software phase.
 
 ## Goal and confirmed decisions
 

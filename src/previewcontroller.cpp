@@ -18,7 +18,8 @@ PreviewController::PreviewController(PreviewSourceFactory factory, std::unique_p
 {
     qRegisterMetaType<PreviewSnapshot>();
     m_snapshot.deviceAvailable = m_output && m_output->isAvailable();
-    m_worker                   = std::make_unique<PreviewDecoderWorker>(
+    connectOutput();
+    m_worker = std::make_unique<PreviewDecoderWorker>(
         std::move(factory),
         [this](std::shared_ptr<PreviewSession> session, PreviewSourceInfo info) {
             // Stale posted results must not retain whole generations of PCM.
@@ -44,6 +45,8 @@ PreviewController::PreviewController(PreviewSourceFactory factory, std::unique_p
         });
     m_pump.setInterval(10);
     QObject::connect(&m_pump, &QTimer::timeout, this, &PreviewController::pump);
+    m_positionTimer.setInterval(100);
+    QObject::connect(&m_positionTimer, &QTimer::timeout, this, &PreviewController::updatePosition);
 }
 
 PreviewController::~PreviewController()
@@ -70,6 +73,7 @@ void PreviewController::invalidate()
 {
     ++m_snapshot.generation;
     m_pump.stop();
+    m_positionTimer.stop();
     if(m_output) {
         m_output->reset();
     }
@@ -106,6 +110,7 @@ void PreviewController::begin(const Track& track, uint64_t positionMs, bool paus
     m_session        = std::make_shared<PreviewSession>(m_snapshot.generation, track, positionMs);
     m_worker->submit(m_session);
     m_pump.start();
+    m_positionTimer.start();
     publish();
 }
 
@@ -122,19 +127,19 @@ void PreviewController::opened(const std::shared_ptr<PreviewSession>& session, c
         return;
     }
     QString error;
-    if(!m_output->configure(info.format, error)) {
+    const auto outputFormat = m_output->configure(info.format, error);
+    if(!outputFormat) {
         fail(error.isEmpty() ? u"Unable to configure the headphone output."_s : error);
         return;
     }
     m_output->setVolume(m_snapshot.volume);
     m_outputConfigured = true;
     m_prebufferBytes
-        = static_cast<size_t>(std::max<uint64_t>(info.format.bytesPerFrame(), info.format.bytesForDuration(40)));
-    m_prebufferBytes      = std::min(m_prebufferBytes, session->buffer()->capacity());
+        = static_cast<size_t>(std::max<uint64_t>(outputFormat->bytesPerFrame(), outputFormat->bytesForDuration(40)));
     m_snapshot.seekable   = info.seekable;
     m_snapshot.positionMs = session->positionMs;
     m_snapshot.state      = m_snapshot.pauseRequested ? PreviewState::Paused : PreviewState::Buffering;
-    session->approve();
+    session->approve(*outputFormat);
     publish();
 }
 
@@ -154,10 +159,11 @@ void PreviewController::playPause()
         m_output->setPaused(m_snapshot.pauseRequested);
     }
     if(m_outputConfigured) {
-        m_snapshot.state = m_snapshot.pauseRequested       ? PreviewState::Paused
-                         : !m_outputStarted                ? PreviewState::Buffering
-                         : m_session->buffer()->finished() ? PreviewState::Draining
-                                                           : PreviewState::Playing;
+        const auto queue = m_session->buffer();
+        m_snapshot.state = m_snapshot.pauseRequested  ? PreviewState::Paused
+                         : !m_outputStarted           ? PreviewState::Buffering
+                         : queue && queue->finished() ? PreviewState::Draining
+                                                      : PreviewState::Playing;
     }
     publish();
 }
@@ -213,7 +219,15 @@ void PreviewController::setOutput(std::unique_ptr<PreviewOutput> output)
     }
     stop();
     m_output = std::move(output);
+    connectOutput();
     refreshOutput();
+}
+
+void PreviewController::connectOutput()
+{
+    if(m_output) {
+        QObject::connect(m_output.get(), &PreviewOutput::availabilityChanged, this, &PreviewController::refreshOutput);
+    }
 }
 
 void PreviewController::refreshOutput()
@@ -258,8 +272,12 @@ void PreviewController::pump()
         return;
     }
     auto queue = m_session->buffer();
+    if(!queue) {
+        return; // Worker is configuring conversion; the GUI never waits for it.
+    }
+    const auto previousState = m_snapshot.state;
     if(!m_outputStarted) {
-        if(queue->size() < m_prebufferBytes && !queue->finished()) {
+        if(queue->size() < std::min(m_prebufferBytes, queue->capacity()) && !queue->finished()) {
             return;
         }
         if(queue->size() == 0 && queue->finished()) {
@@ -303,12 +321,6 @@ void PreviewController::pump()
             break;
         }
     }
-    const auto processed = m_output->processedMs();
-    m_snapshot.positionMs
-        = m_session->positionMs + std::min(processed, std::numeric_limits<uint64_t>::max() - m_session->positionMs);
-    if(m_snapshot.track.isBoundedSegment()) {
-        m_snapshot.positionMs = std::min(m_snapshot.positionMs, m_snapshot.durationMs);
-    }
     if(queue->finished()) {
         m_snapshot.state = PreviewState::Draining;
         if(queue->size() == 0 && m_pendingOffset == m_pending.size() && m_output->drained()) {
@@ -316,7 +328,26 @@ void PreviewController::pump()
             return;
         }
     }
-    publish();
+    if(previousState != m_snapshot.state) {
+        publish();
+    }
+}
+
+void PreviewController::updatePosition()
+{
+    if(m_shutdown || !m_session || !m_outputStarted || m_snapshot.pauseRequested) {
+        return;
+    }
+    const auto processed = m_output->processedMs();
+    auto position
+        = m_session->positionMs + std::min(processed, std::numeric_limits<uint64_t>::max() - m_session->positionMs);
+    if(m_snapshot.track.isBoundedSegment()) {
+        position = std::min(position, m_snapshot.durationMs);
+    }
+    if(position != m_snapshot.positionMs) {
+        m_snapshot.positionMs = position;
+        publish();
+    }
 }
 
 void PreviewController::shutdown()

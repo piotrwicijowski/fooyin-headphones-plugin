@@ -63,9 +63,13 @@ testing its runtime dependency resolution and licence obligations.
 
 ### M3: independent audible output
 
-- [ ] QAudioSink format negotiation, streaming conversion, device selection,
+- [x] QAudioSink format negotiation, streaming conversion, device selection,
   output pumping, drain/reset/position/volume behaviour.
 - [ ] Two-device Linux playback proof before polishing the complete UI.
+
+  Phase 3 software/null-sink checks passed, but Qt 6.8.2/PulseAudio 17 removal
+  notifications/rerouting failed isolation. Physical PipeWire validation and a
+  suitable backend/policy remain open; see the Phase 3 evidence.
 
 ### M4: complete user workflow
 

@@ -12,6 +12,8 @@
 namespace Fooyin::Headphones {
 
 class PreviewController;
+class HeadphoneDevices;
+class HeadphonesSettings;
 
 class HeadphonesPlugin : public QObject,
                          public Plugin,
@@ -31,7 +33,12 @@ public:
     void shutdown() override;
 
 private:
+    void applyOutputDevice();
+    std::unique_ptr<HeadphonesSettings> m_preferences;
+    std::unique_ptr<HeadphoneDevices> m_devices;
     std::unique_ptr<PreviewController> m_controller;
+    QByteArray m_selectedDevice;
+    bool m_outputAttached {false};
     bool m_coreInitialised {false};
     bool m_guiInitialised {false};
     bool m_shutdown {false};

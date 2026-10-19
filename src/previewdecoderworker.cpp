@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "previewdecoderworker.h"
 
+#include "previewconverter.h"
+
 #include <algorithm>
 #include <chrono>
 #include <limits>
@@ -59,18 +61,18 @@ void PreviewSession::cancel()
     }
 }
 
-void PreviewSession::approve()
+void PreviewSession::approve(const AudioFormat& format)
 {
     const std::lock_guard lock {mutex};
-    approved = true;
+    outputFormat = format;
     changed.notify_all();
 }
 
-bool PreviewSession::waitForApproval()
+std::optional<AudioFormat> PreviewSession::waitForApproval()
 {
     std::unique_lock lock {mutex};
-    changed.wait(lock, [this]() { return approved || cancelled.load(); });
-    return !cancelled.load();
+    changed.wait(lock, [this]() { return outputFormat.has_value() || cancelled.load(); });
+    return cancelled.load() ? std::optional<AudioFormat> {} : outputFormat;
 }
 
 void PreviewSession::installBuffer(std::shared_ptr<PreviewPcmBuffer> buffer)
@@ -198,9 +200,7 @@ void PreviewDecoderWorker::decode(const std::shared_ptr<PreviewSession>& session
         return;
     }
     const auto& format = info->format;
-    if(!format.isValid() || format.sampleRate() > 768000 || format.channelCount() > 2
-       || (format.hasChannelLayout()
-           && format.channelLayout() != AudioFormat::defaultChannelLayoutForChannelCount(format.channelCount()))) {
+    if(!isPreviewFormat(format)) {
         m_failed(session->generation, u"Preview requires a valid conventional mono/stereo PCM layout."_s);
         return;
     }
@@ -228,15 +228,22 @@ void PreviewDecoderWorker::decode(const std::shared_ptr<PreviewSession>& session
     if(session->cancelled.load()) {
         return;
     }
-    const size_t frameBytes = static_cast<size_t>(format.bytesPerFrame());
-    const size_t capacity
-        = static_cast<size_t>(std::max<uint64_t>(1, framesForMs(500, format.sampleRate()))) * frameBytes;
-    auto queue = std::make_shared<PreviewPcmBuffer>(capacity, frameBytes);
-    session->installBuffer(queue);
     m_opened(session, *info);
-    if(!session->waitForApproval()) {
+    const auto outputFormat = session->waitForApproval();
+    if(!outputFormat) {
         return;
     }
+    PreviewConverter converter;
+    if(!converter.configure(format, *outputFormat, error)) {
+        m_failed(session->generation, error);
+        return;
+    }
+    const size_t frameBytes       = static_cast<size_t>(format.bytesPerFrame());
+    const size_t outputFrameBytes = static_cast<size_t>(outputFormat->bytesPerFrame());
+    const size_t capacity
+        = static_cast<size_t>(std::max<uint64_t>(1, framesForMs(500, outputFormat->sampleRate()))) * outputFrameBytes;
+    auto queue = std::make_shared<PreviewPcmBuffer>(capacity, outputFrameBytes);
+    session->installBuffer(queue);
 
     uint64_t remaining = std::numeric_limits<uint64_t>::max();
     if(session->track.isBoundedSegment()) {
@@ -284,13 +291,27 @@ void PreviewDecoderWorker::decode(const std::shared_ptr<PreviewSession>& session
         }
         const auto payload = buffer.constData().subspan(static_cast<size_t>(skipped) * frameBytes,
                                                         static_cast<size_t>(frames) * frameBytes);
-        if(!queue->push(payload)) {
+        const AudioBuffer clipped {payload, format, buffer.startTime()};
+        auto converted = converter.convert(clipped, error);
+        if(!converted) {
+            m_failed(session->generation, error);
+            return;
+        }
+        if(!queue->push(*converted)) {
             return;
         }
         remaining -= frames;
         starvedSince = std::chrono::steady_clock::now();
     }
     if(!session->cancelled.load()) {
+        auto tail = converter.finish(error);
+        if(!tail) {
+            m_failed(session->generation, error);
+            return;
+        }
+        if(!queue->push(*tail)) {
+            return;
+        }
         queue->finish();
     }
 }

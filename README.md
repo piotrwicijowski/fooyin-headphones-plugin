@@ -1,20 +1,28 @@
 # Headphones Preview for fooyin
 
 An external plugin for independent headphone preview while fooyin continues
-playing its main output. **Current status: Phase 2 headless preview engine.** The
-plugin owns one independent session controller, decoder worker, and bounded PCM
-pipeline. Qt audio output/device selection follow in Phase 3; actions, settings,
-and the layout panel follow in Phase 4. See [the implementation plan](.plan/00-overview.md).
-The installed plugin currently loads idle with no output attached; its engine is
-exercised through deterministic fake output and real decoder integration checks.
+playing its main output. **Current status: Phase 3 output engine implemented;
+physical routing acceptance remains open.** The plugin owns an independent
+controller, decoder worker, streaming converter, and explicit-device QAudioSink
+output. Track actions, the settings dialog, and the layout panel follow in Phase 4.
+See [the implementation plan](.plan/00-overview.md).
+Plugin load remains idle. The engine is exercised by automated tests and an
+explicit-device audio smoke tool; the complete user-facing workflow is still in
+development. See [routing validation](#routing-validation-and-known-limit).
 
 ## Preview engine contract
 
 The engine accepts ordinary local mono/stereo files, including seekable CUE and
 chapter segments. It rejects remote, virtual/CD, and archive-backed tracks,
 nonconcurrent decoders, unsupported channel layouts, malformed PCM, and runtime
-format changes. Phase 2 carries the decoder's native PCM format unchanged;
-device format negotiation and streaming conversion/resampling are Phase 3 work.
+format changes. The selected device is tested for concrete Float/Int16/Int32
+formats, preferring stereo Float at the source rate, then supported preferred and
+44.1/48 kHz candidates, with mono fallback. The worker normalises input through
+fooyin's public float conversion helper and uses libswresample for streaming
+rate/sample-format conversion and explicit mono duplication/stereo averaging.
+Matching native formats can pass through unchanged. Resampler tails are flushed
+once at EOF and discarded on replacement, seek, stop, or error. Main DSP,
+ReplayGain, main volume, and system device volume are not part of this pipeline.
 
 | Command/event | Behaviour |
 | --- | --- |
@@ -23,25 +31,28 @@ device format negotiation and streaming conversion/resampling are Phase 3 work.
 | `stop()` | Immediately reset output and discard pending/queued audio, cancel work, reset position to zero, retain display/restart metadata |
 | `seek(relativeMs)` | Accept only an active seekable preview, clamp to the known duration and safe timeline, reopen at the latest requested target, preserve paused state |
 | Natural EOF | Drain only current-session PCM, then stop at position zero; never advance selection or playlists |
-| Output change/loss | Discard preview; reconnecting or applying output settings never starts playback |
+| Output change/reported loss | Discard preview; reconnecting or applying output settings never starts playback |
 
 Seeking reports whether the request was accepted; its applied position is
 published after worker startup. The public decoder's `seek()` returns no backend
 success/failure result, so this API cannot diagnose every decoder-specific seek
 failure. To avoid fractional-sample millisecond rounding, the worker seeks to a
 preceding frame-aligned millisecond anchor and discards exact preroll frames.
-Bounded segment endpoints use source frame coordinates, clipped before any
-future conversion. Whole files end at actual decoder EOF, independently of
+Bounded segment endpoints use source frame coordinates, clipped before
+conversion. Whole files end at actual decoder EOF, independently of
 approximate metadata duration.
 
 The GUI-thread controller exposes copied state snapshots and has no dependency
 on the main player, queue, main volume, or output profiles. Source construction,
 file I/O, decoding, seeking, and teardown all run on one dedicated worker. Each
 generation owns a frame-aligned 500 ms ring buffer (hard capacity limit 8 MiB),
-with a 40 ms startup reserve and cancellation-aware producer backpressure. Output
-pumping is bounded and never waits for input; zero/partial writes retain their
-unwritten bytes. Persistent local-source starvation fails after two seconds
-instead of spinning. Native sample rates above 768 kHz are rejected.
+with a 40 ms startup reserve and cancellation-aware producer backpressure.
+Conversion staging is also bounded to 8 MiB. Output pumping runs at 10 ms and
+never waits for input; zero/partial writes retain their unwritten bytes. A 100 ms
+sink buffer is requested, but the backend may adjust it. Position uses processed
+output time (an estimate) and a separate 100 ms snapshot timer, with pause and
+sink-epoch accounting. Persistent local-source starvation fails after two seconds
+instead of spinning. Sample rates above 768 kHz are rejected.
 
 Stop/replacement/seek invalidate generations immediately, and queued stale
 results cannot resurrect a session. Rapid seeks replace the pending worker
@@ -50,6 +61,47 @@ AudioLoader's synchronous open/init has no public cancellation token: ordinary
 controls silence output immediately while a delayed open finishes, and shutdown
 waits for that work to finish before releasing loader/provider references.
 `aboutToQuit`, explicit plugin shutdown, and destruction share idempotent cleanup.
+
+## Explicit device and volume policy
+
+`Headphones/DeviceId` stores the opaque Qt device ID as Base64;
+`Headphones/DeviceDescription` is display text only. An empty, malformed, or
+unmatched ID is unavailable: there is no default-device fallback. The ID is
+resolved at configuration and again immediately before opening the sink.
+Unrelated devices/default changes do not replace a valid active session.
+Qt-reported disappearance resets output before notifying the controller, and
+reconnection only updates readiness. Applying the same ID preserves a session.
+
+`Headphones/Volume` is a normalised UI value in `[0, 1]`, default `0.25`. The
+adapter uses Qt's `LogarithmicVolumeScale` to `LinearVolumeScale` conversion before
+calling `QAudioSink::setVolume()`. Device and volume are persisted through the
+public fooyin SettingsManager; playback state is never persisted. The Phase 4
+dialog/widget will expose these settings. For now, development tests can set
+them through SettingsManager or in an isolated fooyin configuration while it is
+closed; use the smoke tool below to obtain the exact Base64 device ID.
+
+## Routing validation and known limit
+
+Initial deployment expects separately addressable main and headphone devices,
+with actual stream routing checked in PipeWire/PulseAudio. Multiple jacks on one
+card can be mutually exclusive ports rather than separate devices. Qt IDs and
+fooyin backend IDs are different namespaces and do not prove physical separation.
+
+**Observed limitation: Qt 6.8.2's PulseAudio backend did not report removal of a
+selected software sink, and PulseAudio 17 moved its stream to the main sink.**
+The cached Qt catalogue still advertised the old ID, so neither ID checks nor
+the device-change signal could detect that loss in this test. The application
+never requested a default device, but the stream nevertheless changed routes.
+This tested combination does not satisfy the device-loss isolation requirement.
+The corresponding Qt backend removal path omits a device-change notification;
+correct cache invalidation and backend/server routing policy (or a public
+no-move stream option) are needed before claiming leak-free disconnect handling.
+No private Qt/fooyin workaround is used.
+
+Fake-device tests verify stop/reset and no reconnect autoplay when loss is
+reported. Physical two-device concurrent main/headphone playback, unplug tests,
+and a suitable PipeWire/Qt policy remain required release checks. Software null
+sinks and successful unit tests do not establish those hardware guarantees.
 
 ## Requirements and compatibility
 
@@ -63,7 +115,7 @@ waits for that work to finish before releasing loader/provider references.
   source and built Core/Gui/Utils libraries. Public API baseline: fooyin 0.13.1,
   plugin IID `org.fooyin.fooyin.plugin/2`. The IID is not a binary compatibility
   guarantee across different fooyin, Qt, or compiler builds; rebuild to match.
-- FFmpeg `libswresample` and `libavutil` development files and runtime libraries.
+- FFmpeg 5+ `libswresample` (4+) and `libavutil` (57+) development/runtime libraries.
   These are explicit plugin dependencies, discovered using pkg-config or an SDK
   on `CMAKE_PREFIX_PATH`.
 
@@ -72,8 +124,10 @@ qt6-base-dev qt6-multimedia-dev libswresample-dev libavutil-dev`. Building fooyi
 itself requires its additional dependencies; see its `BUILD.md`.
 Qt Widgets alone is insufficient for audio: deployment must also include Qt
 Multimedia's platform audio backend and its runtime dependencies. On Debian 13,
-`libqt6multimedia6` supplies the multimedia backend plugins. Audible output and
-backend packaging will be validated when the output phase is implemented.
+`libqt6multimedia6` supplies Qt Multimedia including its platform audio support.
+The tested PulseAudio audio path worked even with the Qt diagnostic that only
+QMediaDevices/QAudioSink/etc. were available and no general media backend was
+found. Physical backend packaging/routing validation remains required.
 
 ## Development-tree build
 
@@ -178,7 +232,7 @@ ctest --preset test-agent
 # Or: make test FOOYIN_BUILD_DIR=/path/to/fooyin/build-agent
 ```
 
-Three CTest suites run without audio hardware or an audio server:
+Five CTest suites run without audio hardware or an audio server:
 
 - `headphones.plugin-lifecycle` loads the real module using `QPluginLoader`,
   checking metadata/interfaces, partial/duplicate initialisation, retained loader
@@ -191,6 +245,26 @@ Three CTest suites run without audio hardware or an audio server:
 - `headphones.preview-source` registers a WAV fixture decoder with the real public
   AudioLoader, verifies CUE/chapter samples, and checks worker-thread teardown,
   decoder options, concurrent-decoding rejection, and input/loader ownership.
+- `headphones.preview-converter` checks all source sample containers (including
+  left-aligned S24In32), integer scaling, channel gains, streaming rate changes,
+  signal continuity, one-time tail flushing, reset, and allocation bounds.
+- `headphones.preview-output` uses injectable catalogue/sink boundaries for exact
+  format negotiation, duplicate descriptions/opaque IDs, missing devices, hotplug
+  in every active state, buffer adjustment, reset/device epochs, pause/clock/drain,
+  backend recovery, and persistent logarithmic volume/device settings.
+
+An additional executable is built with tests but deliberately **not registered
+with CTest**. It enumerates devices or plays a one-second 440 Hz development tone
+only on an explicitly supplied ID:
+
+```sh
+build-test-agent/tests/previewaudiosmoke --list-devices
+build-test-agent/tests/previewaudiosmoke --device-id 'BASE64_ID_FROM_THE_LIST'
+```
+
+This tool requires a working audio backend. An unavailable ID fails instead of
+opening the default. It can also be used with explicitly configured software
+sinks; those checks do not replace listening/routing tests on actual hardware.
 
 The `fy.headphones` category disables debug messages by default. Enable them with
 `QT_LOGGING_RULES='fy.headphones.debug=true'` or `make run-debug` (which defaults
@@ -208,17 +282,25 @@ GPL-3.0-or-later; see [LICENSE](LICENSE).
 
 ## Verified development setup
 
-Phases 1–2 were validated on Debian 13 x86_64 with GCC 14.2.0, CMake 3.31.6,
+Phases 1–3 software was validated on Debian 13 x86_64 with GCC 14.2.0, CMake 3.31.6,
 Qt 6.8.2, libswresample 5.3.100, libavutil 59.39.100, and fooyin 0.13.1
 (`bb8d9f037`, sibling `build-rebase-agent`). Debug and RelWithDebInfo builds,
-all three automated suites (53 Qt Test checks passed), parallel Make workflows,
+all five automated suites (81 Qt Test checks passed), parallel Make workflows,
 path overrides, and a real fooyin load/normal exit passed. A temporary host probe
 also used fooyin's registered decoder on a generated 44.1 kHz WAV: CUE and chapter
 segments matched all expected samples (749 and 574 frames), and shutdown with a
-fresh open queued completed normally. The container's missing
-Qt Multimedia packages were staged outside the project for these checks.
-The installed-SDK delivery build, Qt 6.4 runtime, other platforms, and actual
-audio/device routing remain later-phase validation. See the
+fresh open queued completed normally. Phase 3 then used real QAudioSink streams
+on an isolated PulseAudio 17 server. Eight real host-decoder fixtures passed:
+MP3/FLAC/WAV at 44.1/48 kHz and FLAC/WAV at 96 kHz, converted to 48 kHz stereo
+Float. Each 250 ms file yielded 12,000 output frames; channel-specific spectral
+checks verified pitch and amplitude before sink volume. Stream inspection also
+confirmed simultaneous streams on two software sinks and exposed the disconnect
+rerouting failure documented above. This was not a physical headphone test or
+a concurrent main-PlayerController proof. Dependencies were staged outside the
+project without system installation.
+Installed-SDK delivery, Qt 6.4 runtime, other platforms, and physical PipeWire
+main/headphone validation remain open. See the
 [Phase 1 evidence](.plan/01-project-and-build.md#completion-evidence-2026-10-18)
-and [Phase 2 evidence](.plan/02-session-and-decoding.md#completion-evidence-2026-10-18)
+[Phase 2 evidence](.plan/02-session-and-decoding.md#completion-evidence-2026-10-18),
+and [Phase 3 evidence](.plan/03-audio-output-and-devices.md#verification-evidence-2026-10-18)
 for details, including the tested host's restart-based plugin-disable policy.
