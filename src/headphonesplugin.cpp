@@ -9,13 +9,17 @@
 #include "headphonessettings.h"
 #include "headphonessettingsdialog.h"
 #include "headphonestrackinfo.h"
+#include "headphonesvariableprovider.h"
 #include "headphonesvolumecontrol.h"
 #include "previewcontroller.h"
 #include "qtaudiooutput.h"
 
 #include <QCoreApplication>
 
+#include <core/playlist/playlisthandler.h>
+#include <core/scripting/scriptregistry.h>
 #include <gui/guiconstants.h>
+#include <gui/playlist/playlistinteractor.h>
 #include <gui/trackselectioncontroller.h>
 #include <gui/widgetprovider.h>
 #include <utils/actions/actionmanager.h>
@@ -53,6 +57,12 @@ void HeadphonesPlugin::initialise(const CorePluginContext& context)
     m_preferences     = std::make_unique<HeadphonesSettings>(context.settingsManager);
     m_controller      = std::make_unique<PreviewController>(makePreviewSourceFactory(context.audioLoader), nullptr);
     m_controller->setVolume(m_preferences->volume());
+    m_variableProvider = std::make_unique<HeadphonesVariableProvider>(*m_controller);
+    for(const auto& variable : m_variableProvider->variables()) {
+        if(!ScriptRegistry::instance().registerVariable(variable)) {
+            qCWarning(HEADPHONES) << "Failed to register Headphones Preview script variable:" << variable.name;
+        }
+    }
     QObject::connect(m_preferences.get(), &HeadphonesSettings::deviceChanged, this, [this]() {
         if(!m_stopping) {
             applyOutputDevice();
@@ -84,6 +94,16 @@ void HeadphonesPlugin::initialise(const GuiPluginContext& context)
     }
 
     m_guiInitialised = true;
+    if(auto* interactor = context.playlistInteractor) {
+        connect(m_variableProvider.get(), &HeadphonesVariableProvider::variablesChanged, interactor, [interactor]() {
+            if(auto* handler = interactor->handler()) {
+                // Metadata and state variables are global, so scripts on any row can depend on them.
+                for(const auto* playlist : handler->playlists()) {
+                    interactor->refreshPlaylist(playlist->id());
+                }
+            }
+        });
+    }
     m_devices        = std::make_unique<HeadphoneDevices>();
     applyOutputDevice();
     m_settingsUi = std::make_shared<HeadphonesSettingsProvider>(*m_preferences, *m_devices);
@@ -207,6 +227,8 @@ void HeadphonesPlugin::shutdown()
     }
     m_settingsUi.reset();
     m_actions.reset();
+    // The host drains ScriptRegistry callbacks before shutting down plugins.
+    m_variableProvider.reset();
     m_controller.reset();
     m_devices.reset();
     m_preferences.reset();

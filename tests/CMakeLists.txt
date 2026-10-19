@@ -36,6 +36,11 @@ target_link_libraries(headphonesguitest PRIVATE HeadphonesGui Qt6::Test)
 add_test(NAME headphones.gui COMMAND headphonesguitest)
 set_tests_properties(headphones.gui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 45)
 
+add_executable(headphonesvariablestest headphonesvariablestest.cpp fakes/previewfakes.h)
+target_link_libraries(headphonesvariablestest PRIVATE HeadphonesGui Qt6::Test)
+add_test(NAME headphones.script-variables COMMAND headphonesvariablestest)
+set_tests_properties(headphones.script-variables PROPERTIES TIMEOUT 30)
+
 # Loaded into an actual matching fooyin, not a second preview process. It is
 # opt-in, requires explicit device IDs/fixtures, and is never installed.
 add_library(HeadphonesInProcessDriver MODULE inprocessdriver.cpp inprocessdriver.json)

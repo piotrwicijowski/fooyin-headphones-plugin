@@ -99,6 +99,42 @@ and Vim Motions.
 | `Headphones.SeekBackward` | Seek headphone preview backward 5 seconds |
 | `Headphones.SeekForward` | Seek headphone preview forward 5 seconds |
 
+### Script variables
+
+The plugin registers the following variables in fooyin's script catalogue under
+**Headphones Preview**. Metadata and state always describe the independent
+headphone preview, regardless of the main player or the track being evaluated.
+
+| Variable | Value |
+| --- | --- |
+| `%headphones_albumartist%` | Preview album artist, falling back to artist/composer/performer |
+| `%headphones_artist%` | Preview artist, falling back to album artist/composer/performer |
+| `%headphones_album%` | Preview album |
+| `%headphones_title%` | Preview title, falling back to the filename without extension |
+| `%headphones_disk%` | Preview disc number; alias: `%headphones_disc%` |
+| `%headphones_track%` | Preview track number; alias: `%headphones_tracknumber%` |
+| `%headphonesicon%` | `🎧` on the evaluated track when it matches the active or paused preview; empty on other tracks or when stopped |
+| `%headphones_isplaying%` | `1` while preview is active and not paused; otherwise empty |
+| `%headphones_isstopped%` | `1` when stopped, idle, or in an error state; otherwise empty |
+| `%headphones_ispaused%` | `1` while paused, including a pending pause during loading; otherwise empty |
+
+Metadata is empty before the first preview and retained after stopping, like
+**Headphones Track Info**. Loading, buffering, and draining count as active;
+exactly one state variable returns `1`. Variables work with conditional sections
+and `$if`, and names are case-insensitive.
+
+For a playlist column, use `[%headphonesicon% ]%title%`, or combine independent
+indicators with `[%playingicon% ][%headphonesicon% ]%title%`. The headphone symbol
+is ordinary Unicode text. It matches track identity (including CUE/chapter
+segments), so duplicate occurrences of the preview track are all marked.
+Playlist rows are refreshed when preview metadata or script-visible state changes.
+
+Example preview status script:
+
+```text
+$if(%headphones_isstopped%,Stopped,$if(%headphones_ispaused%,Paused,Playing))[: %headphones_artist% - ][%headphones_title%]
+```
+
 ## Preview engine contract
 
 The engine accepts ordinary local mono/stereo files, including seekable CUE and
@@ -248,6 +284,8 @@ silence incoming main-player commands or automatically resume main playback.
   source and built Core/Gui/Utils libraries. Public API baseline: fooyin 0.13.1,
   plugin IID `org.fooyin.fooyin.plugin/2`. The IID is not a binary compatibility
   guarantee across different fooyin, Qt, or compiler builds; rebuild to match.
+  Script variables require the public `ScriptRegistry` registration API and
+  `PlaylistInteractor::refreshPlaylist` API (also used by Vim Motions' mark variables).
 - FFmpeg 5+ `libswresample` (4+) and `libavutil` (57+) development/runtime libraries.
   These are explicit plugin dependencies, discovered using pkg-config or an SDK
   on `CMAKE_PREFIX_PATH`.
@@ -372,7 +410,7 @@ ctest --preset test-agent
 # Or: make test FOOYIN_BUILD_DIR=/path/to/fooyin/build-agent
 ```
 
-Six CTest suites run without audio hardware or an audio server:
+Seven CTest suites run without audio hardware or an audio server:
 
 - `headphones.plugin-lifecycle` loads the real module using `QPluginLoader`,
   checking metadata/interfaces, partial/duplicate initialisation, retained loader
@@ -402,6 +440,9 @@ Six CTest suites run without audio hardware or an audio server:
   The loaded-module lifecycle suite also uses real public ActionManager and
   WidgetProvider instances to verify the actual plugin's registration, configuration,
   persistence, multiple instances, and cleanup.
+- `headphones.script-variables` evaluates registered variables through the real
+  script parser, covering metadata/conditional fallbacks, transport states,
+  track/segment icon matching, refresh notifications, and concurrent callbacks.
 
 ### Same-process integration validation
 

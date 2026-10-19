@@ -24,6 +24,7 @@ class HeadphoneDevices;
 class HeadphonesSettings;
 class HeadphonesActions;
 class HeadphonesSettingsProvider;
+class HeadphonesVariableProvider;
 
 class HeadphonesPlugin : public QObject,
                          public Plugin,
@@ -50,6 +51,7 @@ private:
     std::unique_ptr<HeadphonesSettings> m_preferences;
     std::unique_ptr<HeadphoneDevices> m_devices;
     std::unique_ptr<PreviewController> m_controller;
+    std::unique_ptr<HeadphonesVariableProvider> m_variableProvider;
     std::unique_ptr<HeadphonesActions> m_actions;
     std::shared_ptr<HeadphonesSettingsProvider> m_settingsUi;
     std::shared_ptr<std::vector<QPointer<FyWidget>>> m_widgets;

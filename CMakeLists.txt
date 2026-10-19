@@ -66,6 +66,7 @@ add_library(HeadphonesGui STATIC
     src/headphonesplayercontrol.h src/headphonesplayercontrol.cpp
     src/headphonesseekbar.h src/headphonesseekbar.cpp
     src/headphonestrackinfo.h src/headphonestrackinfo.cpp
+    src/headphonesvariableprovider.h src/headphonesvariableprovider.cpp
     src/headphonesvolumecontrol.h src/headphonesvolumecontrol.cpp
     src/headphonessettingsdialog.h src/headphonessettingsdialog.cpp)
 set_target_properties(HeadphonesGui PROPERTIES

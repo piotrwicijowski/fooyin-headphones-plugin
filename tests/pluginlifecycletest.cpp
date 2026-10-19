@@ -4,6 +4,7 @@
 #include <core/engine/audioloader.h>
 #include <core/plugins/coreplugin.h>
 #include <core/plugins/plugin.h>
+#include <core/scripting/scriptregistry.h>
 #include <gui/fywidget.h>
 #include <gui/plugins/guiplugin.h>
 #include <gui/plugins/pluginconfigguiplugin.h>
@@ -36,6 +37,24 @@ QString pluginPath;
 QStringList messages;
 QtMessageHandler previousHandler {nullptr};
 
+// Match the host's registry-before-plugin shutdown order, including failed tests.
+class PluginLoader : public QPluginLoader
+{
+public:
+    using QPluginLoader::QPluginLoader;
+    ~PluginLoader() override
+    {
+        ScriptRegistry::instance().shutdown();
+        QPluginLoader::unload();
+    }
+
+    bool unload()
+    {
+        ScriptRegistry::instance().shutdown();
+        return QPluginLoader::unload();
+    }
+};
+
 void captureMessages(QtMsgType type, const QMessageLogContext& context, const QString& message)
 {
     if(QString::fromLatin1(context.category) == u"fy.headphones") {
@@ -66,7 +85,7 @@ private Q_SLOTS:
 
     void metadataAndDefaultLogging()
     {
-        QPluginLoader loader {pluginPath};
+        PluginLoader loader {pluginPath};
         loader.setLoadHints({});
         QCOMPARE(loader.metaData().value(u"IID"_s).toString(), QString::fromLatin1(FOOYIN_PLUGIN_IID));
         const auto metadata = loader.metaData().value(u"MetaData"_s).toObject();
@@ -83,6 +102,7 @@ private Q_SLOTS:
         QLoggingCategory::setFilterRules({});
         core->initialise(coreContext());
         gui->initialise(guiContext());
+        ScriptRegistry::instance().shutdown();
         plugin->shutdown();
         QVERIFY(root->children().isEmpty());
         QVERIFY(loader.unload());
@@ -101,7 +121,7 @@ private Q_SLOTS:
     {
         QFETCH(int, stage);
         QLoggingCategory::setFilterRules(u"fy.headphones.debug=true"_s);
-        QPluginLoader loader {pluginPath};
+        PluginLoader loader {pluginPath};
         loader.setLoadHints({});
         auto* root = loader.instance();
         QVERIFY2(root, qPrintable(loader.errorString()));
@@ -120,6 +140,7 @@ private Q_SLOTS:
         QCOMPARE(messages.count(u"Core initialised"_s), stage >= 1 ? 1 : 0);
         QCOMPARE(messages.count(u"GUI initialised"_s), stage >= 2 ? 1 : 0);
         QVERIFY(root->children().isEmpty());
+        ScriptRegistry::instance().shutdown();
         plugin->shutdown();
         plugin->shutdown();
         // Late callbacks cannot resurrect a stopped plugin.
@@ -134,7 +155,7 @@ private Q_SLOTS:
     void guiBeforeCore()
     {
         QLoggingCategory::setFilterRules(u"fy.headphones.debug=true"_s);
-        QPluginLoader loader {pluginPath};
+        PluginLoader loader {pluginPath};
         loader.setLoadHints({});
         auto* root = loader.instance();
         QVERIFY2(root, qPrintable(loader.errorString()));
@@ -159,7 +180,7 @@ private Q_SLOTS:
         actions.setMainWindow(&mainWindow);
         // The provider must release its plugin callbacks before module unload.
         auto widgets = std::make_unique<WidgetProvider>();
-        QPluginLoader loader {pluginPath};
+        PluginLoader loader {pluginPath};
         loader.setLoadHints({});
         auto* root = loader.instance();
         QVERIFY2(root, qPrintable(loader.errorString()));
@@ -235,6 +256,7 @@ private Q_SLOTS:
         controls[2] = widgets->createWidget(u"HeadphonesVolumeControls"_s);
         QVERIFY(controls[2]);
         QCOMPARE(controls[2]->findChild<QSlider*>(u"Headphones.Volume"_s)->value(), 37);
+        ScriptRegistry::instance().shutdown();
         plugin->shutdown();
         for(const auto& control : controls) {
             QVERIFY(control.isNull());
@@ -249,9 +271,41 @@ private Q_SLOTS:
         QVERIFY(loader.unload());
     }
 
+    void loadedPluginRegistersScriptVariablesBeforeGui()
+    {
+        PluginLoader loader {pluginPath};
+        loader.setLoadHints({});
+        auto* root = loader.instance();
+        QVERIFY2(root, qPrintable(loader.errorString()));
+        auto* core = qobject_cast<CorePlugin*>(root);
+        auto* gui = qobject_cast<GuiPlugin*>(root);
+        QVERIFY(core && gui);
+        auto& registry = ScriptRegistry::instance();
+        const auto before = registry.variables().size();
+        core->initialise(coreContext());
+        QCOMPARE(registry.variables().size(), before + 10);
+        core->initialise(coreContext());
+        gui->initialise(guiContext());
+        gui->initialise(guiContext());
+        QCOMPARE(registry.variables().size(), before + 10);
+        for(const auto* name : {"HEADPHONES_ALBUMARTIST", "HEADPHONES_ARTIST", "HEADPHONES_ALBUM",
+                                "HEADPHONES_TITLE", "HEADPHONES_DISK", "HEADPHONES_TRACK", "HEADPHONESICON",
+                                "HEADPHONES_ISPLAYING", "HEADPHONES_ISSTOPPED", "HEADPHONES_ISPAUSED"}) {
+            const auto variable = QString::fromLatin1(name);
+            const auto* invoker = registry.variableInvoker(variable.toLower());
+            QVERIFY2(invoker, name);
+            const auto result = (*invoker)({}, variable);
+            const bool stopped = variable == u"HEADPHONES_ISSTOPPED";
+            QCOMPARE(result.value, stopped ? u"1"_s : QString {});
+            QCOMPARE(result.cond, stopped);
+        }
+        QVERIFY(loader.unload());
+        QVERIFY(!registry.isVariable(u"HEADPHONESICON"_s));
+    }
+
     void retainsLoaderUntilShutdown()
     {
-        QPluginLoader loader {pluginPath};
+        PluginLoader loader {pluginPath};
         loader.setLoadHints({});
         auto* root = loader.instance();
         QVERIFY2(root, qPrintable(loader.errorString()));
@@ -264,6 +318,7 @@ private Q_SLOTS:
         core->initialise(context);
         context.audioLoader.reset();
         QVERIFY(!weakLoader.expired());
+        ScriptRegistry::instance().shutdown();
         plugin->shutdown();
         QVERIFY(weakLoader.expired());
         QVERIFY(loader.unload());
@@ -285,7 +340,7 @@ private Q_SLOTS:
         ActionManager actions {&settings};
         actions.setMainWindow(&mainWindow);
         auto widgets = std::make_unique<WidgetProvider>();
-        QPluginLoader loader {pluginPath};
+        PluginLoader loader {pluginPath};
         loader.setLoadHints({});
         auto* root = loader.instance();
         QVERIFY2(root, qPrintable(loader.errorString()));
@@ -335,6 +390,7 @@ private Q_SLOTS:
             if(hostDestroysWidgets) {
                 layout.reset();
             }
+            ScriptRegistry::instance().shutdown();
             plugin->shutdown();
             plugin->shutdown();
             for(const auto& panel : panels) {
@@ -353,7 +409,7 @@ private Q_SLOTS:
     void applicationQuit()
     {
         QLoggingCategory::setFilterRules(u"fy.headphones.debug=true"_s);
-        QPluginLoader loader {pluginPath};
+        PluginLoader loader {pluginPath};
         loader.setLoadHints({});
         auto* root = loader.instance();
         QVERIFY2(root, qPrintable(loader.errorString()));
