@@ -1,5 +1,10 @@
 # Phase 5: automated tests and real-device validation
 
+Status: automated regression consolidation and repeatable software-backend
+validation completed on 2026-10-19. Physical release acceptance remains open:
+the prior user-reported Bluetooth result lacks exact environment details, and
+wider PipeWire/hotplug/listening checks are unavailable in this container.
+
 Tests are implementation deliverables introduced with each feature. This phase
 assembles the end-to-end evidence needed to use the plugin during a party.
 
@@ -21,7 +26,7 @@ assembles the end-to-end evidence needed to use the plugin during a party.
 
 ## Suggested automated suites
 
-Current Phase 4 baseline: `headphones.plugin-lifecycle`,
+Current suites: `headphones.plugin-lifecycle`,
 `headphones.preview-engine`, `headphones.preview-source`,
 `headphones.preview-converter`, `headphones.preview-output`, and `headphones.gui` are implemented
 and registered with CTest. They cover transport, gated cancellation, segment/seek
@@ -32,8 +37,10 @@ included `HeadphonesInProcessDriver` module loaded into the actual matching
 fooyin alongside the actual Headphones plugin, exercising main playback and
 registered UI/actions in the same process. It passed with Vim Motions loaded.
 `previewaudiosmoke` remains only a low-level explicit-device diagnostic, not a
-main-player acceptance test. See Phases 2–4 for evidence, including the unresolved
-real software-backend disconnect assertion from Phase 3.
+main-player acceptance test. Phase 5 adds sample-checked converted replacement and
+coalesced-seek isolation, long-source queue bounds, and a reproducible isolated
+same-process stress runner. See the evidence below and Phases 2–4, including the
+unresolved real software-backend disconnect assertion from Phase 3.
 
 ### `previewcontrollertest.cpp`
 
@@ -163,9 +170,121 @@ avoid emitting main-player events, but final behaviour should be observed too.
 
 ## Acceptance
 
-- [ ] Default automated tests pass without an audio server.
+- [x] Default automated tests pass without an audio server.
 - [ ] Matching fooyin loads the plugin and the full two-device workflow works.
-- [ ] Main-player isolation and old-audio discard have concrete test evidence.
-- [ ] Device-loss behaviour and any OS rerouting limits are recorded accurately.
-- [ ] Normal shutdown releases preview before decoder-provider teardown.
-- [ ] Unavailable hardware/platform checks are recorded as untested, not passed.
+  The loaded-plugin software two-sink workflow passes; full physical acceptance
+  still needs the hardware evidence listed below.
+- [x] Main-player isolation and old-audio discard have concrete test evidence.
+- [x] Device-loss behaviour and any OS rerouting limits are recorded accurately.
+- [x] Normal shutdown releases preview before decoder-provider teardown.
+- [x] Unavailable hardware/platform checks are recorded as untested, not passed.
+
+## Phase 5 verification evidence (2026-10-19)
+
+### Automated regression and reproducibility
+
+- Debian 13 x86_64, GCC 14.2.0, CMake 3.31.6, Qt 6.8.2, libswresample
+  5.3.100/libavutil 59.39.100; matching fooyin 0.13.1 `bb8d9f037` in
+  `/workspace/fooyin/build-rebase-agent`. Audio tools/Qt Multimedia/SQLite driver
+  were staged under `/tmp/opencode`, without system installation.
+- `cmake --build --preset test-agent -j 2` and
+  `PULSE_SERVER=unix:/tmp/opencode/nonexistent-audio-server ctest --preset
+  test-agent -V` passed all six suites. Counts including setup/cleanup:
+  lifecycle 10, engine 43, source 6, converter 14, output 13, GUI 8 = **94 checks**.
+- New engine cases verify every mono-to-stereo Float output sample after
+  replacement with a partial frame/pending old PCM, and after three coalesced
+  paused seeks. Both 44.1 -> 48 kHz and 96 -> 48 kHz paths preserve the new ramp,
+  channel equality, exact segment frame counts and endpoint/tail isolation.
+- One-hour and one-week synthetic source timelines both fill the same
+  **192,000-byte (500 ms)** converted queue, limit source read-ahead, and wake the
+  blocked producer on shutdown. This is a bounded-memory test without allocating
+  long fixtures or relying on process RSS alone.
+- The four new data cases also passed the existing AddressSanitizer + UBSan build:
+  `ASAN_OPTIONS=detect_leaks=0 build-asan-agent/tests/previewenginetest
+  convertedReplacementAndSeekIsolation convertedQueueBoundedForLongSources`.
+  Touched C++ files passed `clang-format --dry-run --Werror`; `git diff --check`
+  passed.
+- `tests/run-inprocess-validation.py` uses Python's standard library, a private
+  foreground PulseAudio server with only two null sinks, explicit IDs, generated
+  WAV signals, isolated HOME/XDG configuration and no desktop session bus. It
+  preserves `fooyin.log`, `pulse.log`, fixtures and `report.json`, samples real
+  server routing and whole-host RSS/CPU, and always stops its child processes.
+  It is opt-in and outside CTest. See README for the ordinary command; staged
+  installations can supply `--pulseaudio`, `--pactl`, `--pulse-module-dir` and the
+  required `LD_LIBRARY_PATH`/`QT_PLUGIN_PATH` environment.
+- Fresh configurations exposed fooyin's modal Quick Setup intercepting shortcuts.
+  The explicitly enabled driver now sets public `Settings::Core::FirstRun` false
+  in its isolated configuration. Extended playback also legitimately emits a
+  main-track `trackPlayed` event; the test verifies that every such event belongs
+  to the main fixture, while preview tracks never enter that accounting path.
+
+### Loaded-plugin extended playback
+
+The runner loaded the real Headphones module and Vim Motions with the matching
+fooyin. Main input was stereo Float WAV at 48 kHz; alternating previews were
+mono S16 WAV at 44.1 kHz and stereo S16 WAV at 96 kHz. The actual negotiated preview
+streams were stereo Float at their source rates; PulseAudio resampled to the
+48 kHz null sinks. Forced plugin resampling is covered by the sample tests above.
+
+The `--seconds 300 --vim-plugin-dir /workspace/fooyin-vim-plugin/build-agent` run
+finished normally after **306.82 seconds**, including:
+
+- **635 cycles** of alternating preview, pause, three seek requests, volume,
+  resume and synchronous UI Stop, with **14,507,480 main frames** submitted.
+- **1,818 observations** of concurrent streams on separate explicit sinks;
+  duplicate streams or routing collisions fail the runner.
+- Unchanged main track, playlist contents, queue, output/volume settings and zero
+  main transport/seek/play-state/track/output events during preview-only work.
+  One normal main-track `trackPlayed` event occurred; no preview-track event did.
+- Main pause and stop at the end did not stop preview; its visible position
+  advanced while main was stopped. Fooyin then quit with preview active, returned
+  exit code 0, and logged exactly one Headphones `Shutdown complete`.
+- Maximum observed command-to-Playing time **193 ms**, sampled by a 50 ms timer.
+  This includes worker/backend startup and is not an acoustic latency measurement
+  or evidence for a universal 100 ms response guarantee. Stop was checked
+  synchronously at the UI; acoustic stop latency/glitches were not measured.
+- **73.97 CPU seconds** for the entire host over 306.82 elapsed seconds (about
+  24% of one CPU). Whole-process RSS after 10 seconds ranged **32,452–93,912 KiB**;
+  a late sample was 47,960 KiB. These include fooyin/Qt/Vim/decoder allocations
+  and residency changes, not plugin-only memory; build checks ran concurrently.
+  Structural queue/converter allocation bounds support the memory claim.
+- Both output paths request 100 ms sink buffers. Initial PulseAudio-reported
+  queued buffer latency was 70 ms for the observed stream formats; this is not
+  the negotiated capacity or end-to-end latency. Hardware buffer sizes remain
+  a deployment measurement.
+
+Artifacts for that run are in
+`/tmp/opencode/headphones-validation-pnx349s4/{fooyin.log,pulse.log,report.json}`.
+A separate `--seconds 0` run without Vim also passed (17 separate-routing
+observations, 91,508 main frames, clean active-preview shutdown).
+
+### Default-device routing diagnostic: failed backend assertion
+
+The optional `--change-default` run changes only the private server's default
+from main to headphones after observing separate concurrent streams. On Qt 6.8.2
+and PulseAudio 17.0, the existing **main test stream moved from sink 0 to sink 1**;
+the preview remained on sink 1. Both streams still had the same original
+`media.name` identifiers. The runner failed with exit 1 and preserved the stream
+records in `/tmp/opencode/headphones-validation-kme4_v19/report.json`.
+
+This is a routing-policy failure of this tested main-QAudioSink/server setup,
+not evidence that preview commands changed main output settings. Changing default
+is therefore a separate diagnostic rather than part of the passing fixed-device
+stress scenario. It is distinct from the previously recorded selected-headphone
+removal/rerouting failure. Neither result is labelled passed or worked around with
+private APIs; explicit IDs alone do not provide physical routing guarantees.
+
+### Remaining physical/platform acceptance
+
+- Record exact fooyin/Qt/PipeWire/WirePlumber versions, device models and routing
+  for the prior user-confirmed main A/Bluetooth B setup and policy change.
+- Exercise the Linux/PipeWire checklist above with listening/capture on physical
+  A/B: unplug during load/play/pause, reconnect/no autoplay, default changes,
+  server restart, main track changes, segment endpoints and audible stale samples.
+- Run a party-length physical session; record dropouts, acoustic startup/stop
+  latency and negotiated hardware buffer sizes. Five minutes of software-sink
+  stress does not establish those measurements.
+- Observe actual notification/scrobble integrations when enabled. The automated
+  test proves host event isolation, but does not load external scrobble services.
+- Qt 6.4 runtime and another desktop platform are untested. Installed-SDK build,
+  installation and delivery remain Phase 6 work.

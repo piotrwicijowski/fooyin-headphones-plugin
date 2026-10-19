@@ -1,8 +1,9 @@
 # Headphones Preview for fooyin
 
 An external plugin for independent headphone preview while fooyin continues
-playing its main output. **Current status: Phase 4 user workflow implemented,
-with a user-validated physical Bluetooth setup.** Broader release validation is
+playing its main output. **Current status: user workflow implemented, Phase 5
+automated/software-backend validation passed, with a user-validated physical
+Bluetooth setup.** Broader release validation is
 ongoing. The plugin provides track actions,
 configurable shortcuts, a device settings dialog, and a layout panel backed by
 one independent controller, decoder worker, streaming converter, and explicit-device QAudioSink.
@@ -141,6 +142,13 @@ The corresponding Qt backend removal path omits a device-change notification;
 correct cache invalidation and backend/server routing policy (or a public
 no-move stream option) are needed before claiming leak-free disconnect handling.
 No private Qt/fooyin workaround is used.
+
+Phase 5 also observed the explicit **main test QAudioSink** moving to the headphone
+sink after changing the private PulseAudio server's default. The preview stream
+stayed on its selected sink, producing a routing collision. The optional
+`--change-default` diagnostic below reports that as a failure. This is a separate
+backend/server-policy limit, even though the plugin did not change main output
+settings. See [Phase 5 evidence](.plan/05-testing-and-validation.md#phase-5-verification-evidence-2026-10-19).
 
 Fake-device tests verify stop/reset and no reconnect autoplay when loss is
 reported. A user has confirmed concurrent main playback on A and Bluetooth
@@ -318,6 +326,8 @@ Six CTest suites run without audio hardware or an audio server:
   replacement, exact segment boundaries, fractional-frame seek rounding,
   pause-preserving/coalesced seeks, starvation, malformed formats, partial-frame
   writes, device readiness, errors/recovery, and processed-output positioning.
+  Phase 5 adds every-sample checks for converted replacement/coalesced-seek
+  isolation at 44.1/96 -> 48 kHz and queue bounds for hour/week source timelines.
 - `headphones.preview-source` registers a WAV fixture decoder with the real public
   AudioLoader, verifies CUE/chapter samples, and checks worker-thread teardown,
   decoder options, concurrent-decoding rejection, and input/loader ownership.
@@ -346,6 +356,8 @@ engine play concurrently through an explicit-device Qt test output backend.
 
 The driver checks main track/playlist/queue snapshots and spies on main transport,
 seek, play-state, track/play-count, output/device, and volume/output-setting events.
+Normal main-track play-count events are allowed during extended playback; any
+preview-track event fails the test.
 It requires main output frames to keep increasing while preview is paused. It
 also exercises real configured keyboard shortcuts with Vim Motions loaded when
 requested, panel recreation, same-ID Apply, changed-device stop, and no autoplay
@@ -377,10 +389,45 @@ For Vim coexistence, append its matching build directory to `FOOYIN_PLUGIN_PATH`
 and set `HEADPHONES_TEST_EXPECT_VIM=1`; the driver then requires its widget
 registration to be present. It assigns test shortcuts in the isolated config,
 selects the test main backend, starts/stops test main playback, and exits normally
-only after printing `HEADPHONES SAME-PROCESS PASS`. It has a 45-second failure
-timeout. Explicit software sinks provide same-process regression coverage;
+only after printing `HEADPHONES SAME-PROCESS PASS`. It suppresses the host's modal
+first-run Quick Setup in this isolated config. It also checks preview continuing
+with main paused/stopped, then quits with preview active. It has a 45-second
+failure timeout, extended by `HEADPHONES_TEST_STRESS_SECONDS` when set (0..3600;
+main fixture must be at least that duration plus 20 seconds). Explicit software
+sinks provide same-process regression coverage;
 physical disconnect/routing checks remain configuration-specific. The user's
 Bluetooth setup passed with the WirePlumber policy change documented above.
+
+#### Repeatable software-sink validation (Linux)
+
+The optional Python 3 runner creates its own private PulseAudio server with two
+null sinks, generates the distinct WAV fixtures, and launches the same real
+fooyin/plugin workflow with fresh HOME/XDG directories and no desktop session bus.
+It requires `pulseaudio` and `pactl` (Debian packages `pulseaudio` and
+`pulseaudio-utils`), plus a matching test-enabled plugin/fooyin build:
+
+```sh
+python3 tests/run-inprocess-validation.py \
+  --fooyin /path/to/matching/fooyin \
+  --plugin-dir build-test-agent \
+  --vim-plugin-dir /path/to/fooyin-vim-plugin/build-agent \
+  --seconds 300
+```
+
+Omit `--vim-plugin-dir` for the standalone Headphones workflow. `--seconds 0`
+runs just the integration workflow; the default is 60 seconds of repeated
+replacement, paused seek bursts, resume, volume and stop. The runner checks live
+server routing, rejects duplicate/colliding streams, samples whole-process CPU/RSS,
+and retains logs/fixtures/`report.json` in the printed temporary directory. Use
+`--artifacts /path/to/new-directory` to select that location. Both child processes
+are stopped on success or failure. This runner is outside ordinary CTest.
+
+For staged installations, `--pulseaudio`, `--pactl`, `--pulse-module-dir`,
+`LD_LIBRARY_PATH` and `QT_PLUGIN_PATH` can select the staged binaries/libraries.
+Add `--change-default` to exercise a private-server default change; the tested
+Qt 6.8.2/PulseAudio 17 setup fails this routing assertion as documented above.
+Software-sink validation does not measure audible glitches, hardware latency, or
+physical unplug isolation.
 
 An additional executable is built with tests but deliberately **not registered
 with CTest**. This low-level diagnostic only enumerates devices or plays a one-second 440 Hz development tone
@@ -431,6 +478,15 @@ and retained its track, playlists, queue, volume and output selection without
 preview-induced main events. GUI/module lifecycle suites also passed
 AddressSanitizer/UBSan checks (Qt leak detection excluded). Dependencies were staged outside the
 project without system installation.
+
+Phase 5 on the same baseline passed all six suites (**94 Qt Test checks**), plus
+the new converted-sample/queue-bound cases under ASan/UBSan. A five-minute
+same-process run with Vim Motions passed **635 cycles**, **1,818 separate-routing
+observations**, over **14.5 million main frames**, and clean shutdown with preview
+active. Maximum observed command-to-Playing time was 193 ms (50 ms test sampling).
+Whole-host CPU/RSS measurements and the separate failed default-routing diagnostic
+are recorded in the [Phase 5 evidence](.plan/05-testing-and-validation.md#phase-5-verification-evidence-2026-10-19).
+
 Installed-SDK delivery, Qt 6.4 runtime, other platforms, and wider physical
 PipeWire main/headphone coverage remain open. The user-reported Bluetooth
 disconnect setup is confirmed with the documented WirePlumber policy. See the

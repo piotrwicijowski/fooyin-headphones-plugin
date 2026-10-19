@@ -1,12 +1,14 @@
 # Headphones preview plugin: implementation plan
 
-Status: Phases 1–4 software implemented, including the actual loaded plugin's
-same-process coexistence test with fooyin main playback and Vim Motions. Phase 5
-validation and Phase 6 installed-SDK/delivery checks remain. A user confirmed
+Status: Phases 1–4 software implemented. Phase 5 automated consolidation and
+repeatable same-process software-backend validation now pass, including a
+five-minute/635-cycle run with main playback and Vim Motions. Phase 5 physical
+acceptance and Phase 6 installed-SDK/delivery checks remain. A user confirmed
 physical main-A/Bluetooth-preview-B disconnect behavior after disabling
 WirePlumber's `linking.pause-playback` policy. Exact environment details and wider
 hardware coverage remain open; the distinct Qt 6.8.2/PulseAudio null-sink failure
-remains recorded and is not resolved by Phase 4.
+remains recorded. Phase 5 also records main-stream rerouting on a software-server
+default change; neither backend limit is resolved by the passing fixed-device run.
 
 ## Goal and confirmed decisions
 

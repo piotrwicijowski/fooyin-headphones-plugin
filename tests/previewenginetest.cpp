@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fakes/previewfakes.h"
+#include "previewdecoderworker.h"
 #include "previewpcmbuffer.h"
 
 #include <QSignalSpy>
@@ -415,6 +416,106 @@ private Q_SLOTS:
             QCOMPARE(sampleAt(h.output->stream, i), static_cast<int16_t>(100 + i / 2));
         }
         QCOMPARE(h.output->format.channelCount(), 2);
+    }
+
+    void convertedReplacementAndSeekIsolation_data()
+    {
+        QTest::addColumn<int>("rate");
+        QTest::newRow("44100-to-48000") << 44100;
+        QTest::newRow("96000-to-48000") << 96000;
+    }
+
+    void convertedReplacementAndSeekIsolation()
+    {
+        QFETCH(int, rate);
+        PreviewHarness h;
+        auto old = h.add(u"old-converted.wav"_s);
+        old->format.setSampleRate(rate);
+        auto next = h.add(u"next-converted.wav"_s);
+        next->format.setSampleRate(rate);
+        next->base                 = 10000;
+        h.output->negotiatedFormat = AudioFormat {SampleFormat::F32, 48000, 2};
+        h.output->maxWrite         = 3; // Leave both a partial output frame and pending PCM.
+        h.create();
+        h.controller->previewTrack(Track {u"old-converted.wav"_s});
+        QTRY_VERIFY(!h.output->stream.empty());
+        h.output->zeroWrites = true;
+
+        Track track {u"next-converted.wav"_s};
+        track.setOffset(100);
+        track.setDuration(50);
+        track.setCuePath(u"fixture.cue"_s);
+        h.controller->previewTrack(track);
+        QVERIFY(h.output->stream.empty());
+        h.output->maxWrite   = std::numeric_limits<qint64>::max();
+        h.output->zeroWrites = false;
+        QTRY_COMPARE(h.output->stream.size(), size_t {2400 * 8});
+        // The new source is strictly positive and distinct from the old one.
+        // Check every sample, including both resampler edges and both channels.
+        const auto verifySignal = [&](uint64_t firstFrame) {
+            for(size_t frame = 0; frame < h.output->stream.size() / 8; ++frame) {
+                float left {}, right {};
+                std::memcpy(&left, h.output->stream.data() + frame * 8, 4);
+                std::memcpy(&right, h.output->stream.data() + frame * 8 + 4, 4);
+                const auto expected = (10000.0 + firstFrame + frame * rate / 48000.0) / 32768.0;
+                QVERIFY2(std::abs(left - expected) < 4.0 / 32768.0, "Stale or out-of-segment converted sample");
+                QCOMPARE(left, right);
+            }
+        };
+        verifySignal(rate / 10);
+        h.controller->playPause();
+        // Coalesced seeks must discard the old resampler tail and pending writes.
+        QVERIFY(h.controller->seek(10));
+        QVERIFY(h.controller->seek(20));
+        QVERIFY(h.controller->seek(30));
+        QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Paused);
+        QCOMPARE(h.controller->snapshot().positionMs, uint64_t {30});
+        QVERIFY(h.output->stream.empty());
+        h.controller->playPause();
+        QTRY_COMPARE(h.output->stream.size(), size_t {960 * 8});
+        verifySignal(rate * 130 / 1000);
+        h.controller->shutdown();
+        QCOMPARE(old->opens.load(), old->destroys.load());
+        QCOMPARE(next->opens.load(), next->destroys.load());
+        QVERIFY(!old->wrongThread && !next->wrongThread);
+    }
+
+    void convertedQueueBoundedForLongSources_data()
+    {
+        QTest::addColumn<quint64>("frames");
+        QTest::newRow("one-hour") << quint64 {96000ULL * 3600};
+        QTest::newRow("one-week") << quint64 {96000ULL * 3600 * 24 * 7};
+    }
+
+    void convertedQueueBoundedForLongSources()
+    {
+        QFETCH(quint64, frames);
+        PreviewHarness h;
+        auto plan = h.add(u"long.wav"_s);
+        plan->format.setSampleRate(96000);
+        plan->totalFrames = frames;
+        plan->blockFrames = 4096;
+        auto session      = std::make_shared<PreviewSession>(1, Track {u"long.wav"_s}, 0);
+        std::atomic<bool> failed {false};
+        PreviewDecoderWorker worker {
+            [library = h.library]() { return std::make_unique<FakeSource>(library); },
+            [](const auto& opened, const auto&) { opened->approve(AudioFormat {SampleFormat::F32, 48000, 2}); },
+            [&](auto, const auto&) {
+                failed = true;
+            }};
+        worker.submit(session);
+        QTRY_VERIFY(session->buffer());
+        auto queue = session->buffer();
+        QTRY_COMPARE(queue->size(), queue->capacity());
+        QCOMPARE(queue->capacity(), size_t {48000 / 2 * 8});
+        QVERIFY(!queue->finished());
+        // At most a half-second queue plus one decoder block can be in flight.
+        QVERIFY(plan->reads.load() <= 14);
+        worker.shutdown(); // Must wake a producer blocked in converted queue push.
+        QCOMPARE(queue->size(), size_t {0});
+        QCOMPARE(plan->destroys.load(), 1);
+        QVERIFY(!plan->wrongThread);
+        QVERIFY(!failed);
     }
 
     void replacementDiscardsOldEofAndPendingBytes()

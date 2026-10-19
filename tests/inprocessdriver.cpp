@@ -164,11 +164,15 @@ public:
         if(!m_enabled) {
             return;
         }
-        m_player    = context.playerController;
-        m_engine    = context.engine;
-        m_loader    = context.audioLoader;
-        m_playlists = context.playlistHandler;
-        m_settings  = context.settingsManager;
+        m_player        = context.playerController;
+        m_engine        = context.engine;
+        m_loader        = context.audioLoader;
+        m_playlists     = context.playlistHandler;
+        m_settings      = context.settingsManager;
+        m_stressSeconds = qEnvironmentVariableIntValue("HEADPHONES_TEST_STRESS_SECONDS");
+        // The opt-in driver uses a fresh isolated configuration. Suppress the
+        // host's modal first-run wizard so it cannot intercept test shortcuts.
+        m_settings->set<Settings::Core::FirstRun>(false);
     }
     void initialise(const GuiPluginContext& context) override
     {
@@ -222,6 +226,15 @@ private:
     }
     bool mainUnchanged()
     {
+        // Extended playback legitimately reaches fooyin's main-track play-count
+        // threshold. Only the main fixture may produce such an event; preview
+        // tracks must never enter this host accounting path.
+        for(const auto& arguments : *m_trackPlayed) {
+            if(!check(qvariant_cast<Track>(arguments.front()).filepath() == m_main.filepath(),
+                      u"Preview track emitted a main-player trackPlayed event"_s)) {
+                return false;
+            }
+        }
         for(const auto& [id, tracks] : m_playlistSnapshot) {
             const auto* playlist = m_playlists->playlistById(id);
             if(!check(playlist && playlist->tracks() == tracks, u"Main playlist contents changed"_s)) {
@@ -239,8 +252,7 @@ private:
                      u"Main output/volume settings changed"_s)
             && check(m_transport->isEmpty() && m_pauses->isEmpty() && m_stops->isEmpty() && m_tracks->isEmpty()
                          && m_outputs->isEmpty() && m_devices->isEmpty() && m_seeks->isEmpty()
-                         && m_playStates->isEmpty() && m_trackPlayed->isEmpty() && m_volumeEvents == 0
-                         && m_outputSettingEvents == 0,
+                         && m_playStates->isEmpty() && m_volumeEvents == 0 && m_outputSettingEvents == 0,
                      u"Preview emitted main transport/track/output events"_s);
     }
     void previewMenu(const Track& track)
@@ -265,7 +277,11 @@ private:
     }
     void tick()
     {
-        if(!check(m_elapsed.elapsed() < 45000, u"Validation timeout"_s)) {
+        if(!check(m_stressSeconds >= 0 && m_stressSeconds <= 3600, u"Stress duration must be 0..3600 seconds"_s)
+           || !check(m_elapsed.elapsed() < 45000 + m_stressSeconds * 1000, u"Validation timeout"_s)) {
+            return;
+        }
+        if(m_stage >= 30 && m_stage <= 34 && !mainUnchanged()) {
             return;
         }
         if(m_stage == 0) {
@@ -298,6 +314,11 @@ private:
             if(!check(m_loader->readTrackMetadata(m_main) && m_loader->readTrackMetadata(m_preview)
                           && m_loader->readTrackMetadata(m_other),
                       u"Fixture metadata could not be read"_s)) {
+                return;
+            }
+            if(!check(m_main.duration() >= static_cast<uint64_t>(m_stressSeconds + 20) * 1000
+                          && m_preview.duration() >= 20000 && m_other.duration() >= 20000,
+                      u"Fixtures too short for validation duration"_s)) {
                 return;
             }
             m_main.setTitle(u"Main in-process"_s);
@@ -369,10 +390,20 @@ private:
             if(m_pauseWait.elapsed() < 300) {
                 return;
             }
+            // A software sink can have a longer server-side startup prebuffer
+            // than the requested QAudioSink buffer. Wait for actual main output
+            // progress instead of assuming it must refill within 300 ms.
+            if(m_player->currentPosition() <= m_pausePosition || mainWrittenFrames <= m_pauseFrames) {
+                return;
+            }
             if(!mainUnchanged()
                || !check(status() == u"Paused" && m_player->currentPosition() > m_pausePosition
                              && mainWrittenFrames > m_pauseFrames,
-                         u"Shortcut did not pause preview or main did not keep producing audio"_s)) {
+                         u"Shortcut/main progress: preview=%1 main position=%2->%3 frames=%4->%5"_s.arg(status())
+                             .arg(m_pausePosition)
+                             .arg(m_player->currentPosition())
+                             .arg(m_pauseFrames)
+                             .arg(mainWrittenFrames.load()))) {
                 return;
             }
             m_panel->findChild<QSlider*>(u"Headphones.Volume"_s)->setValue(61);
@@ -480,16 +511,83 @@ private:
                          u"Panel lost the retained display selection"_s)) {
                 return;
             }
-            trigger("Headphones.Stop");
-            qInfo() << "HEADPHONES SAME-PROCESS PASS: actual plugin menu/actions/keyboard/panel selection, "
-                       "pause/seek/volume, panel recreation, settings; main track/playlist/queue/output/volume "
-                       "unchanged, zero main transport events; main frames"
-                    << mainWrittenFrames.load();
-            m_stage = 6;
-            m_player->stop(); // Outside the measured preview-only interval.
-            m_finishWait.start();
+            m_stressWait.start();
+            m_stage = 30;
         }
-        else if(m_stage == 6 && m_finishWait.elapsed() >= 500) {
+        else if(m_stage == 30) {
+            if(m_stressWait.elapsed() >= m_stressSeconds * 1000) {
+                qInfo() << "HEADPHONES ISOLATION PASS: main track/playlist/queue/output/volume unchanged, "
+                           "zero main transport events; main frames"
+                        << mainWrittenFrames.load() << "stress cycles" << m_stressCycles << "max command-to-playing ms"
+                        << m_maxStartMs << "normal main trackPlayed events" << m_trackPlayed->size();
+                // Outside the measured preview-only interval, exercise independence
+                // in the opposite direction and quit with preview still active.
+                trigger("Headphones.PlayPause");
+                if(status() == u"Paused") {
+                    trigger("Headphones.PlayPause");
+                }
+                m_player->pause();
+                m_stage = 40;
+                m_finishWait.start();
+                return;
+            }
+            previewMenu(m_stressCycles % 2 == 0 ? m_preview : m_other);
+            m_actionWait.start();
+            m_stage = 31;
+        }
+        else if(m_stage == 31) {
+            if(status() != u"Playing") {
+                return;
+            }
+            m_maxStartMs = std::max(m_maxStartMs, m_actionWait.elapsed());
+            trigger("Headphones.PlayPause");
+            trigger("Headphones.SeekForward");
+            trigger("Headphones.SeekBackward");
+            trigger("Headphones.SeekForward");
+            m_stage = 32;
+        }
+        else if(m_stage == 32) {
+            if(status() != u"Paused") {
+                return;
+            }
+            m_panel->findChild<QSlider*>(u"Headphones.Volume"_s)->setValue(20 + m_stressCycles % 60);
+            trigger("Headphones.PlayPause");
+            m_stage = 33;
+        }
+        else if(m_stage == 33) {
+            if(status() != u"Playing") {
+                return;
+            }
+            // Allow real output to consume PCM between seek/replacement bursts.
+            m_finishWait.start();
+            m_stage = 34;
+        }
+        else if(m_stage == 34 && m_finishWait.elapsed() >= 200) {
+            trigger("Headphones.Stop");
+            if(!check(status() == u"Stopped", u"Stress stop was not synchronous"_s)) {
+                return;
+            }
+            ++m_stressCycles;
+            m_stage = 30;
+        }
+        else if(m_stage == 40 && m_finishWait.elapsed() >= 1200) {
+            if(!check(m_player->playState() == Player::PlayState::Paused && status() == u"Playing",
+                      u"Main pause interrupted preview"_s)) {
+                return;
+            }
+            m_previewPosition = m_panel->findChild<QLabel*>(u"Headphones.Position"_s)->text();
+            m_player->stop();
+            m_finishWait.start();
+            m_stage = 41;
+        }
+        else if(m_stage == 41 && m_finishWait.elapsed() >= 1200) {
+            if(!check(m_player->playState() == Player::PlayState::Stopped && status() == u"Playing"
+                          && m_panel->findChild<QLabel*>(u"Headphones.Position"_s)->text() != m_previewPosition,
+                      u"Preview did not advance with main stopped"_s)) {
+                return;
+            }
+            qInfo() << "HEADPHONES SAME-PROCESS PASS: actual plugin workflow, main isolation, "
+                       "preview continues with main paused/stopped; quitting with active preview";
             m_timer.stop();
             QCoreApplication::quit();
         }
@@ -498,6 +596,8 @@ private:
     bool m_enabled {false};
     bool m_closed {false};
     int m_stage {0};
+    int m_stressSeconds {0}, m_stressCycles {0};
+    qint64 m_maxStartMs {0};
     PlayerController* m_player {nullptr};
     EngineController* m_engine {nullptr};
     PlaylistHandler* m_playlists {nullptr};
@@ -511,6 +611,8 @@ private:
     std::unique_ptr<WidgetContext> m_selectionContext;
     QTimer m_timer;
     QElapsedTimer m_elapsed, m_pauseWait, m_finishWait;
+    QElapsedTimer m_stressWait, m_actionWait;
+    QString m_previewPosition;
     Track m_main, m_preview, m_other;
     PlaybackQueueSnapshot m_queue;
     std::vector<std::pair<UId, TrackList>> m_playlistSnapshot;
