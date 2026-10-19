@@ -22,7 +22,7 @@ CONFIG_ENV = $(if $(strip $(XDG_CONFIG_HOME)),XDG_CONFIG_HOME="$(XDG_CONFIG_HOME
 
 .PHONY: help fooyin-configure fooyin-build configure configure-release configure-tests \
     build build-release install-plugin sync-plugin install-plugin-release \
-    run run-debug dev dev-release test check
+    run run-debug run-gdb dev dev-release test check
 
 help:
 	@printf '%s\n' \
@@ -34,6 +34,7 @@ help:
 	  '  dev / dev-release              Build fooyin, configure/build/copy the plugin' \
 	  '  configure-tests / test / check Build and run Qt lifecycle tests' \
 	  '  run / run-debug                Launch fooyin (debug enables fy.headphones)' \
+	  '  run-gdb                        Launch fooyin under GDB with debug logging' \
 	  '' \
 	  'Overrides: PLUGIN_CONFIG_PRESET, PLUGIN_CONFIG_PRESET_RELEASE, PLUGIN_TEST_PRESET,' \
 	  '  PLUGIN_BUILD_DIR, PLUGIN_RELEASE_BUILD_DIR, PLUGIN_TEST_BUILD_DIR,' \
@@ -94,3 +95,8 @@ run:
 run-debug:
 	@test -n "$(FOOYIN_BIN)" && test -x "$(FOOYIN_BIN)" || { printf '%s\n' 'No fooyin executable found. Build fooyin or set FOOYIN_BIN=/path/to/fooyin.' >&2; exit 1; }
 	env $(CONFIG_ENV) QT_LOGGING_RULES="$(QT_LOGGING_RULES)" "$(FOOYIN_BIN)"
+
+run-gdb:
+	@test -n "$(FOOYIN_BIN)" && test -x "$(FOOYIN_BIN)" || { printf '%s\n' 'No fooyin executable found. Build fooyin or set FOOYIN_BIN=/path/to/fooyin.' >&2; exit 1; }
+	@command -v gdb >/dev/null 2>&1 || { printf '%s\n' 'GDB not found. Install gdb to use run-gdb.' >&2; exit 1; }
+	env $(CONFIG_ENV) QT_LOGGING_RULES="$(QT_LOGGING_RULES)" gdb -ex 'set pagination off' -ex run --args "$(FOOYIN_BIN)" --skip-single

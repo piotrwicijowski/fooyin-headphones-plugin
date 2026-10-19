@@ -14,12 +14,14 @@
 
 #include <QApplication>
 #include <QDialogButtonBox>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QLoggingCategory>
 #include <QMainWindow>
 #include <QPluginLoader>
 #include <QPushButton>
 #include <QSlider>
+#include <QSplitter>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -123,8 +125,9 @@ private Q_SLOTS:
         core->initialise(coreContext());
         gui->initialise(guiContext());
         QVERIFY(loader.unload());
+        QCOMPARE(messages.count(u"Preview resources stopped"_s), 1);
         QCOMPARE(messages.count(u"Shutdown complete"_s), 1);
-        QCOMPARE(messages.size(), stage + 1);
+        QCOMPARE(messages.size(), stage + 2);
     }
 
     void guiBeforeCore()
@@ -254,6 +257,86 @@ private Q_SLOTS:
         QVERIFY(loader.unload());
     }
 
+    void applicationQuitPreservesLayout_data()
+    {
+        QTest::addColumn<bool>("hostDestroysWidgets");
+        QTest::newRow("host-destroys-widgets") << true;
+        QTest::newRow("plugin-cleans-up-remaining-widgets") << false;
+    }
+
+    void applicationQuitPreservesLayout()
+    {
+        QFETCH(bool, hostDestroysWidgets);
+        QTemporaryDir dir;
+        SettingsManager settings {dir.filePath(u"settings.ini"_s)};
+        QMainWindow mainWindow;
+        ActionManager actions {&settings};
+        actions.setMainWindow(&mainWindow);
+        auto widgets = std::make_unique<WidgetProvider>();
+        QPluginLoader loader {pluginPath};
+        loader.setLoadHints({});
+        auto* root = loader.instance();
+        QVERIFY2(root, qPrintable(loader.errorString()));
+        auto* core   = qobject_cast<CorePlugin*>(root);
+        auto* gui    = qobject_cast<GuiPlugin*>(root);
+        auto* plugin = qobject_cast<Plugin*>(root);
+        QVERIFY(core && gui && plugin);
+        auto coreServices            = coreContext();
+        coreServices.settingsManager = &settings;
+        coreServices.audioLoader     = std::make_shared<AudioLoader>();
+        std::weak_ptr<AudioLoader> weakLoader = coreServices.audioLoader;
+        core->initialise(coreServices);
+        coreServices.audioLoader.reset();
+        auto guiServices           = guiContext();
+        guiServices.actionManager  = &actions;
+        guiServices.widgetProvider = widgets.get();
+        gui->initialise(guiServices);
+
+        auto layout = std::make_unique<QSplitter>();
+        const QStringList ids {u"HeadphonesPreview"_s, u"HeadphonesPlayerControls"_s,
+                               u"HeadphonesSeekBar"_s, u"HeadphonesVolumeControls"_s};
+        std::vector<QPointer<FyWidget>> panels;
+        QJsonArray beforeQuit;
+        for(const auto& id : ids) {
+            auto* panel = widgets->createWidget(id);
+            QVERIFY(panel);
+            layout->addWidget(panel);
+            panels.emplace_back(panel);
+            panel->saveLayout(beforeQuit);
+        }
+        QVERIFY(!weakLoader.expired());
+        bool saved {false};
+        // Like fooyin's main(), register host shutdown after plugin startup.
+        // The host saves its layout before destroying GUI objects and unloading plugins.
+        QObject hostShutdown;
+        connect(qApp, &QCoreApplication::aboutToQuit, &hostShutdown, [&]() {
+            QVERIFY(weakLoader.expired()); // Preview resources must already be released.
+            QJsonArray atQuit;
+            for(const auto& panel : panels) {
+                QVERIFY2(panel, "Plugin deleted a layout widget before host layout saving");
+                panel->saveLayout(atQuit);
+            }
+            QCOMPARE(atQuit, beforeQuit);
+            QVERIFY(actions.command("Headphones.PreviewSelected"));
+            saved = true;
+            if(hostDestroysWidgets) {
+                layout.reset();
+            }
+            plugin->shutdown();
+            plugin->shutdown();
+            for(const auto& panel : panels) {
+                QVERIFY(panel.isNull());
+            }
+            QVERIFY(!actions.command("Headphones.PreviewSelected"));
+        });
+        QTimer::singleShot(0, qApp, &QCoreApplication::quit);
+        QCOMPARE(qApp->exec(), 0);
+        QVERIFY(saved);
+        layout.reset();
+        widgets.reset();
+        QVERIFY(loader.unload());
+    }
+
     void applicationQuit()
     {
         QLoggingCategory::setFilterRules(u"fy.headphones.debug=true"_s);
@@ -268,7 +351,8 @@ private Q_SLOTS:
         gui->initialise(guiContext());
         QTimer::singleShot(0, qApp, &QCoreApplication::quit);
         QCOMPARE(qApp->exec(), 0);
-        QCOMPARE(messages.count(u"Shutdown complete"_s), 1);
+        QCOMPARE(messages.count(u"Preview resources stopped"_s), 1);
+        QCOMPARE(messages.count(u"Shutdown complete"_s), 0);
         QVERIFY(loader.unload());
         QCOMPARE(messages.count(u"Shutdown complete"_s), 1);
     }

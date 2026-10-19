@@ -45,6 +45,7 @@ public:
     std::unique_ptr<PluginSettingsProvider> settingsProvider() const override;
 
 private:
+    void stopPreview();
     void applyOutputDevice();
     std::unique_ptr<HeadphonesSettings> m_preferences;
     std::unique_ptr<HeadphoneDevices> m_devices;
@@ -57,6 +58,7 @@ private:
     bool m_outputAttached {false};
     bool m_coreInitialised {false};
     bool m_guiInitialised {false};
+    bool m_stopping {false};
     bool m_shutdown {false};
 };
 

@@ -133,7 +133,10 @@ request. A published decoder can be aborted safely without racing destruction.
 AudioLoader's synchronous open/init has no public cancellation token: ordinary
 controls silence output immediately while a delayed open finishes, and shutdown
 waits for that work to finish before releasing loader/provider references.
-`aboutToQuit`, explicit plugin shutdown, and destruction share idempotent cleanup.
+`aboutToQuit` idempotently stops preview and releases its output, decoder worker,
+and loader references, while keeping layout widgets and their dependencies alive.
+Fooyin then saves and destroys its GUI before explicit plugin shutdown performs
+the remaining cleanup. Plugin destruction also performs that idempotent cleanup.
 
 ## Explicit device and volume policy
 
@@ -306,6 +309,7 @@ make help
 make -j dev FOOYIN_BUILD_DIR=/path/to/fooyin/build
 make -j dev-release FOOYIN_BUILD_DIR=/path/to/fooyin/build
 make run-debug
+make run-gdb
 ```
 
 `dev` builds the selected, already-configured fooyin tree, then configures,
@@ -337,6 +341,12 @@ or accept an explicit executable, and fail clearly if none exists. They only set
 instance before plugin-load validation: another instance can receive the launch
 request instead of loading the updated plugin.
 
+`make run-gdb` requires GDB and starts the local executable under the debugger
+with the same logging and path overrides as `run-debug`. It passes `--skip-single`
+so the debugged process runs independently. Quit fooyin normally to reproduce an
+exit crash; when GDB stops at the fault, run `thread apply all bt full` to collect
+all thread backtraces. Use `quit` to leave GDB.
+
 ## Tests and logging
 
 ```sh
@@ -350,7 +360,9 @@ Six CTest suites run without audio hardware or an audio server:
 
 - `headphones.plugin-lifecycle` loads the real module using `QPluginLoader`,
   checking metadata/interfaces, partial/duplicate initialisation, retained loader
-  lifetime, late callbacks, destructor cleanup, and `aboutToQuit` cleanup.
+  lifetime, late callbacks, destructor cleanup, and `aboutToQuit` resource cleanup.
+  It checks that all four layout widgets survive early quit cleanup and serialize
+  unchanged before host-style GUI destruction and final plugin shutdown.
 - `headphones.preview-engine` uses gated fake sources/output for transport,
   delayed-open/read cancellation, full-buffer shutdown, stale results/EOF,
   replacement, exact segment boundaries, fractional-frame seek rounding,
@@ -475,7 +487,9 @@ above for that. Physical listening/routing tests still require actual hardware.
 The `fy.headphones` category disables debug messages by default. Enable them with
 `QT_LOGGING_RULES='fy.headphones.debug=true'` or `make run-debug` (which defaults
 to that rule). A load/exit should log one each of `Core initialised`,
-`GUI initialised`, and `Shutdown complete`.
+`GUI initialised`, `Preview resources stopped`, and `Shutdown complete`. Preview
+resources stop before the host saves its layout; full shutdown completes after
+the host destroys its GUI.
 
 For isolated manual validation, set `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
 `XDG_CACHE_HOME`, and `XDG_STATE_HOME` to temporary directories and use fooyin's

@@ -30,9 +30,10 @@ Q_LOGGING_CATEGORY(HEADPHONES, "fy.headphones", QtInfoMsg)
 
 HeadphonesPlugin::HeadphonesPlugin()
 {
-    // Normal exit must release future preview resources before providers unload.
+    // Stop preview before decoder providers unload, but leave layout widgets alive:
+    // the host's later aboutToQuit handler saves the layout before destroying the GUI.
     if(auto* app = QCoreApplication::instance()) {
-        QObject::connect(app, &QCoreApplication::aboutToQuit, this, &HeadphonesPlugin::shutdown);
+        QObject::connect(app, &QCoreApplication::aboutToQuit, this, &HeadphonesPlugin::stopPreview);
     }
 }
 
@@ -43,7 +44,7 @@ HeadphonesPlugin::~HeadphonesPlugin()
 
 void HeadphonesPlugin::initialise(const CorePluginContext& context)
 {
-    if(m_shutdown || m_coreInitialised) {
+    if(m_stopping || m_coreInitialised) {
         return;
     }
 
@@ -52,18 +53,18 @@ void HeadphonesPlugin::initialise(const CorePluginContext& context)
     m_controller      = std::make_unique<PreviewController>(makePreviewSourceFactory(context.audioLoader), nullptr);
     m_controller->setVolume(m_preferences->volume());
     QObject::connect(m_preferences.get(), &HeadphonesSettings::deviceChanged, this, [this]() {
-        if(!m_shutdown) {
+        if(!m_stopping) {
             applyOutputDevice();
         }
     });
     QObject::connect(m_preferences.get(), &HeadphonesSettings::volumeChanged, this, [this]() {
-        if(!m_shutdown) {
+        if(!m_stopping) {
             m_controller->setVolume(m_preferences->volume());
         }
     });
     QObject::connect(m_controller.get(), &PreviewController::snapshotChanged, this,
                      [this](const PreviewSnapshot& snapshot) {
-                         if(!m_shutdown && snapshot.volume != m_preferences->volume()) {
+                         if(!m_stopping && snapshot.volume != m_preferences->volume()) {
                              m_preferences->setVolume(snapshot.volume);
                          }
                      });
@@ -73,7 +74,7 @@ void HeadphonesPlugin::initialise(const CorePluginContext& context)
 
 void HeadphonesPlugin::initialise(const GuiPluginContext& context)
 {
-    if(m_shutdown || m_guiInitialised) {
+    if(m_stopping || m_guiInitialised) {
         return;
     }
     if(!m_coreInitialised) {
@@ -173,7 +174,7 @@ std::unique_ptr<PluginSettingsProvider> HeadphonesPlugin::settingsProvider() con
 
 void HeadphonesPlugin::applyOutputDevice()
 {
-    if(!m_devices || !m_controller) {
+    if(m_stopping || !m_devices || !m_controller) {
         return;
     }
     const auto selected = m_preferences->deviceId();
@@ -185,6 +186,18 @@ void HeadphonesPlugin::applyOutputDevice()
     m_controller->setOutput(std::make_unique<QtAudioOutput>(*m_devices, selected));
 }
 
+void HeadphonesPlugin::stopPreview()
+{
+    if(m_stopping) {
+        return;
+    }
+    m_stopping = true;
+    if(m_controller) {
+        m_controller->shutdown();
+    }
+    qCDebug(HEADPHONES) << "Preview resources stopped";
+}
+
 void HeadphonesPlugin::shutdown()
 {
     if(m_shutdown) {
@@ -192,6 +205,7 @@ void HeadphonesPlugin::shutdown()
     }
 
     m_shutdown = true;
+    stopPreview();
     if(m_widgets) {
         for(const auto& widget : *m_widgets) {
             delete widget.data();
@@ -200,10 +214,7 @@ void HeadphonesPlugin::shutdown()
     }
     m_settingsUi.reset();
     m_actions.reset();
-    if(m_controller) {
-        m_controller->shutdown();
-        m_controller.reset();
-    }
+    m_controller.reset();
     m_devices.reset();
     m_preferences.reset();
     m_settingsManager.clear();
