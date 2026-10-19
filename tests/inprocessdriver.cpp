@@ -13,9 +13,11 @@
 #include <gui/plugins/guiplugin.h>
 #include <gui/trackselectioncontroller.h>
 #include <gui/widgetprovider.h>
+#include <gui/widgets/elidedlabel.h>
 #include <utils/actions/actionmanager.h>
 #include <utils/actions/command.h>
 #include <utils/settings/settingsmanager.h>
+#include <utils/stringutils.h>
 
 #include <QApplication>
 #include <QAudioSink>
@@ -23,6 +25,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QElapsedTimer>
+#include <QJsonObject>
 #include <QLabel>
 #include <QMediaDevices>
 #include <QMenu>
@@ -32,6 +35,8 @@
 #include <QSlider>
 #include <QTest>
 #include <QTimer>
+#include <QToolButton>
+#include <QVBoxLayout>
 
 #include <algorithm>
 #include <atomic>
@@ -215,7 +220,34 @@ private:
     }
     QString status() const
     {
-        return m_panel->findChild<QLabel*>(u"Headphones.Status"_s)->text();
+        // Observe the individual widgets' public UI rather than relying on the
+        // removed combined widget's status label. Require clock progress before
+        // treating a new preview as playing, so loading is not mistaken for playback.
+        if(!m_actions->command("Headphones.Pause")->action()->isEnabled()) {
+            return m_actions->command("Headphones.Stop")->action()->isEnabled() ? u"Error"_s : u"Stopped"_s;
+        }
+        if(m_panel->findChild<QToolButton*>(u"Headphones.PlayPause"_s)->toolTip() == u"Play headphone preview") {
+            return u"Paused"_s;
+        }
+        auto* seek = m_panel->findChild<QSlider*>(u"Headphones.Seek"_s);
+        return seek->isEnabled() && seek->value() > 0 ? u"Playing"_s : u"Loading"_s;
+    }
+    QWidget* createPreviewWidgets()
+    {
+        // A test-only container exercises the actual separately registered widgets.
+        auto panel = std::make_unique<QWidget>();
+        auto* layout = new QVBoxLayout(panel.get());
+        const QStringList ids {u"HeadphonesPlayerControls"_s, u"HeadphonesSeekBar"_s,
+                               u"HeadphonesVolumeControls"_s, u"HeadphonesOutputDevice"_s, u"HeadphonesTrackInfo"_s};
+        for(const auto& id : ids) {
+            auto* widget = m_widgets->createWidget(id);
+            if(!check(widget, u"Actual plugin widget was not created: %1"_s.arg(id))) {
+                return nullptr;
+            }
+            widget->loadLayoutData({{u"Orientation"_s, Qt::Horizontal}, {u"ShowConfigure"_s, true}});
+            layout->addWidget(widget);
+        }
+        return panel.release();
     }
     void trigger(const char* id)
     {
@@ -285,7 +317,7 @@ private:
             return;
         }
         if(m_stage == 0) {
-            if(!m_widgets->widgetExists(u"HeadphonesPreview"_s)) {
+            if(!m_widgets->widgetExists(u"HeadphonesPlayerControls"_s)) {
                 return;
             }
             const auto mainId = QByteArray::fromBase64(qgetenv("HEADPHONES_TEST_MAIN_ID"));
@@ -326,8 +358,8 @@ private:
             m_other.setTitle(u"Preview B"_s);
             m_settings->set(u"Headphones/DeviceDescription", u"Explicit validation headphones"_s);
             m_settings->set(u"Headphones/DeviceId", QString::fromLatin1(m_headId.toBase64()));
-            m_panel = m_widgets->createWidget(u"HeadphonesPreview"_s);
-            if(!check(m_panel, u"Actual plugin panel was not created"_s)) {
+            m_panel = createPreviewWidgets();
+            if(!m_panel) {
                 return;
             }
             m_panel->show();
@@ -369,7 +401,7 @@ private:
                 return;
             }
             if(!mainUnchanged()
-               || !check(m_panel->findChild<QLabel*>(u"Headphones.Title"_s)->text().contains(u"Preview A"),
+               || !check(m_panel->findChild<ElidedLabel*>(u"Headphones.Title"_s)->text().contains(u"Preview A"),
                          u"Context-menu snapshot target changed"_s)) {
                 return;
             }
@@ -407,7 +439,8 @@ private:
                 return;
             }
             m_panel->findChild<QSlider*>(u"Headphones.Volume"_s)->setValue(61);
-            m_panel->findChild<QSlider*>(u"Headphones.Seek"_s)->setValue(5000);
+            auto* seek = m_panel->findChild<QSlider*>(u"Headphones.Seek"_s);
+            seek->setValue(seek->maximum() / 2);
             m_stage = 4;
         }
         else if(m_stage == 4) {
@@ -415,14 +448,14 @@ private:
                 return;
             }
             if(!mainUnchanged()
-               || !check(m_panel->findChild<QLabel*>(u"Headphones.Position"_s)->text().startsWith(u"0:10"),
+               || !check(m_panel->findChild<QLabel*>(u"Headphones.Elapsed"_s)->text() == Utils::msToString(10000),
                          u"Paused seek was not applied"_s)) {
                 return;
             }
             trigger("Headphones.PlayPause");
             delete m_panel.data();
-            m_panel = m_widgets->createWidget(u"HeadphonesPreview"_s);
-            if(!check(m_panel, u"Panel could not be recreated"_s)) {
+            m_panel = createPreviewWidgets();
+            if(!m_panel) {
                 return;
             }
             m_panel->show();
@@ -434,10 +467,10 @@ private:
             }
             if(!mainUnchanged()
                || !check(m_panel->findChild<QSlider*>(u"Headphones.Volume"_s)->value() == 61,
-                         u"Recreated panel lost volume"_s)) {
+                          u"Recreated volume controls lost volume"_s)) {
                 return;
             }
-            m_panel->findChild<QPushButton*>(u"Headphones.Configure"_s)->click();
+            m_panel->findChild<QToolButton*>(u"Headphones.Configure"_s)->click();
             QDialog* dialog {nullptr};
             for(auto* widget : QApplication::topLevelWidgets()) {
                 if(widget->objectName() == u"Headphones.Settings") {
@@ -493,13 +526,13 @@ private:
                 return;
             }
             if(!mainUnchanged()
-               || !check(m_panel->findChild<QLabel*>(u"Headphones.Title"_s)->text().contains(u"Preview B"),
+               || !check(m_panel->findChild<ElidedLabel*>(u"Headphones.Title"_s)->text().contains(u"Preview B"),
                          u"Focused preview shortcut targeted the wrong track"_s)) {
                 return;
             }
             trigger("Headphones.Stop");
             m_panel->activateWindow();
-            QTest::mouseClick(m_panel->findChild<QPushButton*>(u"Headphones.Preview"_s), Qt::LeftButton);
+            QTest::mouseClick(m_panel->findChild<QToolButton*>(u"Headphones.Preview"_s), Qt::LeftButton);
             m_stage = 9;
         }
         else if(m_stage == 9) {
@@ -507,8 +540,8 @@ private:
                 return;
             }
             if(!mainUnchanged()
-               || !check(m_panel->findChild<QLabel*>(u"Headphones.Title"_s)->text().contains(u"Preview B"),
-                         u"Panel lost the retained display selection"_s)) {
+               || !check(m_panel->findChild<ElidedLabel*>(u"Headphones.Title"_s)->text().contains(u"Preview B"),
+                          u"Player controls lost the retained display selection"_s)) {
                 return;
             }
             m_stressWait.start();
@@ -518,7 +551,7 @@ private:
             if(m_stressWait.elapsed() >= m_stressSeconds * 1000) {
                 qInfo() << "HEADPHONES ISOLATION PASS: main track/playlist/queue/output/volume unchanged, "
                            "zero main transport events; main frames"
-                        << mainWrittenFrames.load() << "stress cycles" << m_stressCycles << "max command-to-playing ms"
+                        << mainWrittenFrames.load() << "stress cycles" << m_stressCycles << "max command-to-progress ms"
                         << m_maxStartMs << "normal main trackPlayed events" << m_trackPlayed->size();
                 // Outside the measured preview-only interval, exercise independence
                 // in the opposite direction and quit with preview still active.
@@ -575,15 +608,19 @@ private:
                       u"Main pause interrupted preview"_s)) {
                 return;
             }
-            m_previewPosition = m_panel->findChild<QLabel*>(u"Headphones.Position"_s)->text();
+            m_previewPosition = m_panel->findChild<QSlider*>(u"Headphones.Seek"_s)->value();
             m_player->stop();
             m_finishWait.start();
             m_stage = 41;
         }
         else if(m_stage == 41 && m_finishWait.elapsed() >= 1200) {
-            if(!check(m_player->playState() == Player::PlayState::Stopped && status() == u"Playing"
-                          && m_panel->findChild<QLabel*>(u"Headphones.Position"_s)->text() != m_previewPosition,
-                      u"Preview did not advance with main stopped"_s)) {
+            if(!check(m_player->playState() == Player::PlayState::Stopped && status() == u"Playing",
+                      u"Main stop interrupted preview"_s)) {
+                return;
+            }
+            // Use the high-resolution timeline rather than whole-second labels;
+            // allow the software sink's startup prebuffer to drain before progress.
+            if(m_panel->findChild<QSlider*>(u"Headphones.Seek"_s)->value() <= m_previewPosition) {
                 return;
             }
             qInfo() << "HEADPHONES SAME-PROCESS PASS: actual plugin workflow, main isolation, "
@@ -606,13 +643,13 @@ private:
     TrackSelectionController* m_selection {nullptr};
     WidgetProvider* m_widgets {nullptr};
     std::shared_ptr<AudioLoader> m_loader;
-    QPointer<FyWidget> m_panel;
+    QPointer<QWidget> m_panel;
     std::unique_ptr<QWidget> m_selectionView;
     std::unique_ptr<WidgetContext> m_selectionContext;
     QTimer m_timer;
     QElapsedTimer m_elapsed, m_pauseWait, m_finishWait;
     QElapsedTimer m_stressWait, m_actionWait;
-    QString m_previewPosition;
+    int m_previewPosition {0};
     Track m_main, m_preview, m_other;
     PlaybackQueueSnapshot m_queue;
     std::vector<std::pair<UId, TrackList>> m_playlistSnapshot;

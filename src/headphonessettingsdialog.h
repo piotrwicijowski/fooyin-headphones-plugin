@@ -27,7 +27,7 @@ private:
     QString m_pendingDescription;
 };
 
-// Shared by the host's provider adapter and all panel configure buttons.
+// Shared by the host's provider adapter and all player-control configure buttons.
 class HeadphonesSettingsProvider : public PluginSettingsProvider
 {
 public:

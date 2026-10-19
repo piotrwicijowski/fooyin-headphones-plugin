@@ -2,14 +2,16 @@
 #include "fakes/audiosinkfakes.h"
 #include "fakes/previewfakes.h"
 #include "headphonesactions.h"
+#include "headphonesoutputdevice.h"
 #include "headphonessettings.h"
 #include "headphonessettingsdialog.h"
-#include "headphoneswidget.h"
 #include "headphonesplayercontrol.h"
 #include "headphonesseekbar.h"
+#include "headphonestrackinfo.h"
 #include "headphonesvolumecontrol.h"
 
 #include <gui/trackselectioncontroller.h>
+#include <gui/widgets/elidedlabel.h>
 #include <utils/actions/actionmanager.h>
 #include <utils/actions/command.h>
 #include <utils/settings/settingsmanager.h>
@@ -51,7 +53,7 @@ private Q_SLOTS:
         controls.loadLayoutData({{u"ShowPause"_s, true}, {u"ShowPlay"_s, true}});
         controls.show();
         for(const auto& name : {u"Headphones.Stop"_s, u"Headphones.Pause"_s, u"Headphones.Play"_s,
-                                u"Headphones.PlayPause"_s}) {
+                                u"Headphones.PlayPause"_s, u"Headphones.Preview"_s}) {
             auto* button = controls.findChild<QToolButton*>(name);
             QVERIFY(button);
             QVERIFY(!button->isEnabled());
@@ -213,6 +215,151 @@ private Q_SLOTS:
         QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Playing);
     }
 
+    void playerControlsPreviewDisplaySelectionAndSharePluginSettings()
+    {
+        QTemporaryDir dir;
+        SettingsManager manager {dir.filePath(u"settings.ini"_s)};
+        HeadphonesSettings settings {&manager};
+        FakeDeviceCatalogue catalogue;
+        auto provider = std::make_shared<HeadphonesSettingsProvider>(settings, catalogue);
+        PreviewHarness h;
+        auto source = h.add(u"preview.wav"_s);
+        h.add(u"focused.wav"_s);
+        h.create();
+        HeadphonesActions actions {*h.controller, nullptr};
+        HeadphonesPlayerControl controls {*h.controller, actions, nullptr, provider};
+        auto* preview = controls.findChild<QToolButton*>(u"Headphones.Preview"_s);
+        auto* configure = controls.findChild<QToolButton*>(u"Headphones.Configure"_s);
+        QVERIFY(preview && configure);
+        QVERIFY(!preview->isHidden());
+        QVERIFY(!preview->isEnabled());
+        QVERIFY(configure->isHidden());
+        // Old layouts also get the requested default visibility.
+        controls.loadLayoutData({});
+        QVERIFY(!preview->isHidden());
+        QVERIFY(configure->isHidden());
+        actions.setSelection({Track {u"focused.wav"_s}}, {Track {u"preview.wav"_s}});
+        QVERIFY(preview->isEnabled());
+        preview->click();
+        QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Playing);
+        QCOMPARE(h.controller->snapshot().track.filepath(), u"preview.wav"_s);
+        actions.setSelection({}, {Track {u"preview.wav"_s}});
+        QVERIFY(preview->isEnabled());
+        preview->click();
+        QTRY_COMPARE(source->opens.load(), 2);
+        actions.setSelection({}, {Track {u"https://example.com/live"_s}, Track {u"preview.wav"_s}});
+        QVERIFY(!preview->isEnabled());
+        QVERIFY(!preview->toolTip().isEmpty());
+        actions.setSelection({}, {});
+        QVERIFY(!preview->isEnabled());
+        QMenu menu;
+        controls.populateContextMenu(&menu);
+        for(auto* action : menu.actions()) {
+            if(action->text() == u"Show Preview Selected" || action->text() == u"Show Configure") {
+                action->trigger();
+            }
+        }
+        QVERIFY(preview->isHidden());
+        QVERIFY(!configure->isHidden());
+        QJsonObject saved;
+        controls.saveLayoutData(saved);
+        HeadphonesPlayerControl restored {*h.controller, actions, nullptr, provider};
+        restored.loadLayoutData(saved);
+        QVERIFY(restored.findChild<QToolButton*>(u"Headphones.Preview"_s)->isHidden());
+        QVERIFY(!restored.findChild<QToolButton*>(u"Headphones.Configure"_s)->isHidden());
+        h.controller->stop();
+        auto* dialog = provider->createSettings(nullptr);
+        auto host = settingsProviderAdapter(provider);
+        configure->click();
+        QVERIFY(dialog->isVisible());
+        QCOMPARE(provider->createSettings(nullptr), dialog);
+        dialog->hide();
+        host->showSettings(nullptr);
+        QCOMPARE(provider->createSettings(nullptr), dialog);
+        QVERIFY(dialog->isVisible());
+        QCOMPARE(h.controller->snapshot().state, PreviewState::Stopped);
+        h.controller->setOutput(nullptr);
+        actions.setSelection({}, {Track {u"preview.wav"_s}});
+        QVERIFY(!preview->isEnabled());
+    }
+
+    void outputDeviceWidgetsSynchroniseAndRetainMissingDevices()
+    {
+        QTemporaryDir dir;
+        SettingsManager manager {dir.filePath(u"settings.ini"_s)};
+        HeadphonesSettings settings {&manager};
+        settings.setDevice("missing", u"Saved headphones"_s);
+        FakeDeviceCatalogue catalogue;
+        catalogue.entries = {fakeDevice("a"), fakeDevice("b")};
+        QSignalSpy changed {&settings, &HeadphonesSettings::deviceChanged};
+        HeadphonesOutputDevice widget {settings, catalogue};
+        HeadphonesOutputDevice other {settings, catalogue};
+        auto* combo = widget.findChild<QComboBox*>(u"Headphones.DeviceChoice"_s);
+        auto* otherCombo = other.findChild<QComboBox*>(u"Headphones.DeviceChoice"_s);
+        QVERIFY(combo && otherCombo);
+        QCOMPARE(combo->currentData().toByteArray(), QByteArray {"missing"});
+        QVERIFY(combo->currentText().contains(u"Unavailable"));
+        QVERIFY(combo->itemText(1) != combo->itemText(2)); // Duplicate names have distinct IDs.
+        QCOMPARE(changed.count(), 0);
+        const auto activate = [combo](const QByteArray& id) {
+            const auto index = combo->findData(id);
+            combo->setCurrentIndex(index);
+            combo->activated(index);
+        };
+        activate("b");
+        QCOMPARE(settings.deviceId(), QByteArray {"b"});
+        QCOMPARE(settings.deviceDescription(), catalogue.entries[1].description);
+        QCOMPARE(otherCombo->currentData().toByteArray(), QByteArray {"b"});
+        QCOMPARE(changed.count(), 1);
+        catalogue.change({fakeDevice("a")});
+        QCOMPARE(combo->currentData().toByteArray(), QByteArray {"b"});
+        QVERIFY(combo->currentText().contains(u"Unavailable"));
+        QCOMPARE(settings.deviceId(), QByteArray {"b"});
+        catalogue.change({fakeDevice("b"), fakeDevice("a")});
+        QCOMPARE(combo->currentData().toByteArray(), QByteArray {"b"});
+        QVERIFY(!combo->currentText().contains(u"Unavailable"));
+        QCOMPARE(changed.count(), 1); // Refresh/hotplug never applies another output.
+        settings.setDevice("a", catalogue.entries[1].description);
+        QCOMPARE(combo->currentData().toByteArray(), QByteArray {"a"});
+        QCOMPARE(otherCombo->currentData().toByteArray(), QByteArray {"a"});
+        activate({});
+        QVERIFY(settings.deviceId().isEmpty());
+        QVERIFY(otherCombo->currentData().toByteArray().isEmpty());
+        QCOMPARE(combo->currentText(), u"Not configured"_s);
+    }
+
+    void trackInfoFollowsPreviewAndSurvivesRecreation()
+    {
+        PreviewHarness h;
+        h.add(u"preview.wav"_s);
+        h.add(u"other.wav"_s);
+        h.create();
+        HeadphonesActions actions {*h.controller, nullptr};
+        HeadphonesTrackInfo info {*h.controller};
+        auto* title = info.findChild<ElidedLabel*>(u"Headphones.Title"_s);
+        QVERIFY(title);
+        QCOMPARE(title->text(), u"No headphone preview"_s);
+        Track track {u"preview.wav"_s};
+        track.setTitle(u"<b>Title</b>"_s);
+        track.setArtists({u"Artist"_s});
+        actions.setSelection({}, {track});
+        QCOMPARE(title->text(), u"No headphone preview"_s);
+        actions.previewDisplaySelection();
+        QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Playing);
+        QCOMPARE(title->text(), u"Artist - <b>Title</b>"_s);
+        QCOMPARE(title->textFormat(), Qt::PlainText);
+        actions.setSelection({}, {Track {u"other.wav"_s}});
+        QCOMPARE(title->text(), u"Artist - <b>Title</b>"_s);
+        h.controller->stop();
+        const auto generation = h.controller->snapshot().generation;
+        HeadphonesTrackInfo recreated {*h.controller};
+        QCOMPARE(recreated.findChild<ElidedLabel*>(u"Headphones.Title"_s)->text(), title->text());
+        QCOMPARE(h.controller->snapshot().generation, generation);
+        actions.previewDisplaySelection();
+        QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Playing);
+        QCOMPARE(title->text(), Track {u"other.wav"_s}.effectiveTitle());
+    }
+
     void separateSeekbarUsesAbsolutePositionAndCancelsDrag_data()
     {
         QTest::addColumn<int>("orientation");
@@ -366,7 +513,7 @@ private Q_SLOTS:
             QCOMPARE(second->opens.load(), 0);
             QCOMPARE(h.controller->snapshot().track.filepath(), u"first.wav"_s);
             h.controller->stop();
-            // A panel keeps the last display selection after focus moves off the view.
+            // Player controls keep the last display selection after focus moves off the view.
             actions.setSelection({}, {Track {u"second.wav"_s}});
             auto* shortcut = actions.findChild<QAction*>(u"Headphones.PreviewSelected"_s);
             QVERIFY(!shortcut->isEnabled());
@@ -431,14 +578,8 @@ private Q_SLOTS:
         QVERIFY(settings.deviceId().isEmpty());
     }
 
-    void widgetPreservesPausedSeekAndSessionAcrossRecreation()
+    void widgetsPreservePausedSeekAndSessionAcrossRecreation()
     {
-        QTemporaryDir dir;
-        SettingsManager manager {dir.filePath(u"settings.ini"_s)};
-        HeadphonesSettings settings {&manager};
-        settings.setDevice("selected", u"Headphones"_s);
-        FakeDeviceCatalogue catalogue;
-        catalogue.entries = {fakeDevice("selected")};
         PreviewHarness h;
         auto plan = h.add(u"preview.wav"_s);
         h.create();
@@ -447,57 +588,51 @@ private Q_SLOTS:
         track.setTitle(u"<b>Preview title</b>"_s);
         track.setDuration(10000);
         actions.setSelection({track}, {track});
-        auto provider = std::make_shared<HeadphonesSettingsProvider>(settings, catalogue);
-        auto widget   = std::make_unique<HeadphonesWidget>(*h.controller, actions, settings, catalogue, provider);
-        widget->show();
-        auto* preview = widget->findChild<QPushButton*>(u"Headphones.Preview"_s);
-        QTest::mouseClick(preview, Qt::LeftButton);
+        auto controls = std::make_unique<HeadphonesPlayerControl>(*h.controller, actions, nullptr);
+        auto seekbar = std::make_unique<HeadphonesSeekBar>(*h.controller, nullptr);
+        auto volumeControl = std::make_unique<HeadphonesVolumeControl>(*h.controller, nullptr);
+        controls->findChild<QToolButton*>(u"Headphones.Preview"_s)->click();
         QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Playing);
-        auto* title = widget->findChild<QLabel*>(u"Headphones.Title"_s);
-        QCOMPARE(title->text(), u"<b>Preview title</b>"_s);
-        QCOMPARE(title->textFormat(), Qt::PlainText);
-        widget->findChild<QPushButton*>(u"Headphones.PlayPause"_s)->click();
-        auto* seek = widget->findChild<QSlider*>(u"Headphones.Seek"_s);
+        controls->findChild<QToolButton*>(u"Headphones.PlayPause"_s)->click();
+        auto* seek = seekbar->findChild<QSlider*>(u"Headphones.Seek"_s);
         QVERIFY(seek->isEnabled());
         const auto generation = h.controller->snapshot().generation;
-        // Simulate dragging: no seek until release, and exactly one new generation.
-        seek->setSliderDown(true);
-        seek->setSliderPosition(5000);
-        QCOMPARE(h.controller->snapshot().generation, generation);
-        seek->setSliderDown(false);
+        seek->setValue(seek->maximum() / 2);
         QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Paused);
         QCOMPARE(h.controller->snapshot().generation, generation + 1);
         QCOMPARE(h.controller->snapshot().positionMs, uint64_t {5000});
-        auto* volume = widget->findChild<QSlider*>(u"Headphones.Volume"_s);
+        auto* volume = volumeControl->findChild<QSlider*>(u"Headphones.Volume"_s);
         volume->setValue(42);
         QCOMPARE(h.controller->snapshot().volume, 0.42);
-        QCOMPARE(widget->findChild<QLabel*>(u"Headphones.VolumeValue"_s)->text(), u"42%"_s);
+        QVERIFY(volume->toolTip().contains(u"42%"));
         const auto opens = plan->opens.load();
-        widget.reset();
+        controls.reset();
+        seekbar.reset();
+        volumeControl.reset();
         QCOMPARE(h.controller->snapshot().state, PreviewState::Paused);
-        widget = std::make_unique<HeadphonesWidget>(*h.controller, actions, settings, catalogue, provider);
+        controls = std::make_unique<HeadphonesPlayerControl>(*h.controller, actions, nullptr);
+        seekbar = std::make_unique<HeadphonesSeekBar>(*h.controller, nullptr);
+        volumeControl = std::make_unique<HeadphonesVolumeControl>(*h.controller, nullptr);
         QCOMPARE(plan->opens.load(), opens);
-        QCOMPARE(widget->findChild<QSlider*>(u"Headphones.Volume"_s)->value(), 42);
-        QCOMPARE(widget->findChild<QLabel*>(u"Headphones.Status"_s)->text(), u"Paused"_s);
+        QCOMPARE(volumeControl->findChild<QSlider*>(u"Headphones.Volume"_s)->value(), 42);
+        QCOMPARE(seekbar->findChild<QLabel*>(u"Headphones.Elapsed"_s)->text(), Utils::msToString(5000));
+        QCOMPARE(h.controller->snapshot().state, PreviewState::Paused);
+        QCOMPARE(h.controller->snapshot().generation, generation + 1);
     }
 
     void oversizedMetadataDurationUsesSafeSeekRange()
     {
-        QTemporaryDir dir;
-        SettingsManager manager {dir.filePath(u"settings.ini"_s)};
-        HeadphonesSettings settings {&manager};
-        FakeDeviceCatalogue catalogue;
         PreviewHarness h;
         auto source = h.add(u"long.wav"_s);
         h.create();
-        HeadphonesActions actions {*h.controller, nullptr};
-        HeadphonesWidget widget {*h.controller, actions, settings, catalogue, {}};
+        HeadphonesSeekBar widget {*h.controller, nullptr};
         Track track {u"long.wav"_s};
         track.setDuration(std::numeric_limits<uint64_t>::max());
         h.controller->previewTrack(track);
         QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Playing);
         h.controller->playPause();
-        widget.findChild<QSlider*>(u"Headphones.Seek"_s)->setValue(10000);
+        auto* slider = widget.findChild<QSlider*>(u"Headphones.Seek"_s);
+        slider->setValue(slider->maximum());
         QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Paused);
         QCOMPARE(source->lastSeek.load(), static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
     }
@@ -512,13 +647,13 @@ private Q_SLOTS:
         PreviewHarness h;
         h.add(u"unknown.wav"_s);
         h.create();
-        HeadphonesActions actions {*h.controller, nullptr};
-        HeadphonesWidget widget {*h.controller, actions, settings, catalogue, {}};
+        HeadphonesSeekBar seekbar {*h.controller, nullptr};
+        HeadphonesOutputDevice output {settings, catalogue};
         h.controller->previewTrack(Track {u"unknown.wav"_s});
         QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Playing);
-        QVERIFY(!widget.findChild<QSlider*>(u"Headphones.Seek"_s)->isEnabled());
-        QVERIFY(widget.findChild<QLabel*>(u"Headphones.Device"_s)->text().contains(u"unavailable"));
-        QVERIFY(widget.findChild<QLabel*>(u"Headphones.Position"_s)->text().contains(u"unknown"));
+        QVERIFY(!seekbar.findChild<QSlider*>(u"Headphones.Seek"_s)->isEnabled());
+        QVERIFY(output.findChild<QComboBox*>(u"Headphones.DeviceChoice"_s)->currentText().contains(u"Unavailable"));
+        QCOMPARE(seekbar.findChild<QLabel*>(u"Headphones.Total"_s)->text(), u"unknown"_s);
     }
 };
 

@@ -5,7 +5,7 @@ playing its main output. **Current status: user workflow implemented, Phase 5
 automated/software-backend validation passed, with a user-validated physical
 Bluetooth setup.** Broader release validation is
 ongoing. The plugin provides track actions,
-configurable shortcuts, a device settings dialog, and a layout panel backed by
+configurable shortcuts, a device settings dialog, and individual layout widgets backed by
 one independent controller, decoder worker, streaming converter, and explicit-device QAudioSink.
 See [the implementation plan](.plan/00-overview.md).
 Plugin load remains idle. Validation now exercises the actual loaded plugin
@@ -18,41 +18,43 @@ Motions. See [same-process validation](#same-process-integration-validation) and
 1. Select the main device explicitly in fooyin's playback/output settings.
 2. In fooyin's plugin settings, select **Headphones Preview → Configure**, then
    choose a different, separately addressable headphone device and apply it.
-3. Enable layout editing and add **Headphones plugin → Headphones Preview**. The panel is
-   limited to one active layout instance.
+3. Enable layout editing and add the widgets you need under **Headphones plugin**:
+   **Headphones Player Controls**, **Headphones Seekbar**, **Headphones Volume
+   Controls**, **Headphones Output Device**, and **Headphones Track Info**.
 4. Select a track and invoke **Preview in headphones** from its track context
-   menu, or click **Preview selected** in the panel.
-5. Use the panel's Play/Pause, Stop, position/seek, and independent headphone
-   volume controls. **Device…** opens the same configuration dialog as the plugin
-   settings page.
+   menu, or click **Preview selected** in **Headphones Player Controls**.
+5. Use the player controls, seekbar, and independent headphone volume controls.
+   Select an output directly in **Headphones Output Device**, or enable **Show
+   Configure** in the player controls' right-click menu to open plugin settings.
 
 For multiple selected tracks, preview uses the **first track in the selection
 controller's order**. If that track is unsupported, preview is disabled; it does
 not search later selections or alter the main queue. Changing selection alone
 never starts or replaces preview. Context-menu actions retain the track they were
-built for; keyboard actions use the focused selection. The panel uses fooyin's
+built for; keyboard actions use the focused selection. The player controls use fooyin's
 retained display selection so clicking a control does not lose the intended track.
 
-The panel shows preview title/artist, the selected headphone device, status/error,
-elapsed/duration, and volume percentage. Unknown-duration and unseekable sources
+The widgets show preview artist/title, the selected headphone device,
+elapsed/duration, and volume feedback. Unknown-duration and unseekable sources
 have no enabled seek slider. Dragging shows a tentative position and sends one
-seek on release; a paused preview stays paused. Closing/recreating the layout
-panel does not stop preview; registered shortcuts remain usable without a panel.
+seek on release; a paused preview stays paused. Closing/recreating layout
+widgets does not stop preview; registered shortcuts remain usable without widgets.
 
 ### Separate layout widgets
 
-Layout editing also provides three independently placeable widgets under **Headphones plugin**:
+Layout editing provides five independently placeable widgets under **Headphones plugin**:
 
 | Widget | Right-click configuration |
 | --- | --- |
-| **Headphones Player Controls** | Show/hide Stop, Pause, Play, and Play/Pause individually; Automatic, Horizontal, or Vertical orientation |
+| **Headphones Player Controls** | Show/hide Preview selected, Stop, Pause, Play, Play/Pause, and Configure individually; Automatic, Horizontal, or Vertical orientation |
 | **Headphones Seekbar** | Show labels, show remaining time, and orientation |
 | **Headphones Volume Controls** | Show/hide the slider and mute icon; orientation |
+| **Headphones Output Device** | Headphone output dropdown; no additional configuration |
+| **Headphones Track Info** | Preview track as Artist - Title; no additional configuration |
 
 Each instance saves its configuration with the layout. All instances control the
-same headphone preview, including the original **Headphones Preview** panel,
-which still contains its existing controls. The new player controls use fooyin's
-standard tool-button styling and icons. Click anywhere on the new seekbar to
+same headphone preview. The player controls use fooyin's standard tool-button
+styling and icons. Click anywhere on the seekbar to
 seek to that position, or drag and release; right-click during a drag cancels it.
 Paused previews stay paused after seeking. The seekbar has no played/scrobble
 threshold marker. Click its total-time label to toggle remaining time.
@@ -66,6 +68,20 @@ The separate Play and Pause buttons are hidden by default. Enable **Show Play**
 and **Show Pause** in the player controls' right-click menu. Like fooyin's main
 controls, Play starts/resumes the retained preview or restarts it when already
 playing; Pause pauses it without toggling back to playback on repeated clicks.
+
+**Preview selected** is shown by default and previews the first track in the
+retained display selection. **Configure** is hidden by default; enable **Show
+Configure** in the player controls' right-click menu to open the plugin's shared
+settings dialog. Button visibility is saved per widget instance, including when
+restoring older layouts that omit these options.
+
+The output dropdown applies changes immediately, using the same persisted device
+setting as the plugin settings dialog. All output widgets stay in sync. A missing
+saved device remains explicitly unavailable through hotplug, with no fallback or
+automatic playback. Changing output stops the current preview. The track-info
+widget follows the preview rather than the current selection, elides long text,
+and retains the last preview's metadata when stopped. Tracks without an artist
+show just their title.
 
 ### Configurable commands
 
@@ -156,7 +172,7 @@ dialog stages edits until Apply/OK; Cancel discards unapplied changes. A missing
 saved/pending device stays explicitly unavailable rather than selecting a default,
 and duplicate descriptions are disambiguated by ID. Hotplug preserves pending
 selection. The dialog does not contain a stale volume field: live volume belongs
-to the panel, so applying device settings cannot overwrite a newer volume value.
+to the volume controls, so applying device settings cannot overwrite a newer volume value.
 
 ## Routing validation and known limit
 
@@ -361,7 +377,7 @@ Six CTest suites run without audio hardware or an audio server:
 - `headphones.plugin-lifecycle` loads the real module using `QPluginLoader`,
   checking metadata/interfaces, partial/duplicate initialisation, retained loader
   lifetime, late callbacks, destructor cleanup, and `aboutToQuit` resource cleanup.
-  It checks that all four layout widgets survive early quit cleanup and serialize
+  It checks that all five layout widgets survive early quit cleanup and serialize
   unchanged before host-style GUI destruction and final plugin shutdown.
 - `headphones.preview-engine` uses gated fake sources/output for transport,
   delayed-open/read cancellation, full-buffer shutdown, stale results/EOF,
@@ -382,17 +398,17 @@ Six CTest suites run without audio hardware or an audio server:
   backend recovery, and persistent logarithmic volume/device settings.
 - `headphones.gui` checks QAction/menu targets and first-track rules, settings
   staging/Apply/Cancel/hotplug, shared dialog lifetime, pause-preserving scrubbing,
-  visible volume feedback, and panel recreation without session replacement.
+  visible volume feedback, and widget recreation without session replacement.
   The loaded-module lifecycle suite also uses real public ActionManager and
   WidgetProvider instances to verify the actual plugin's registration, configuration,
-  persistence, instance limit, and cleanup.
+  persistence, multiple instances, and cleanup.
 
 ### Same-process integration validation
 
 The primary integration driver is a **test-only plugin loaded into the actual
 matching fooyin process alongside Headphones Preview**. It does not instantiate
 another preview engine or call a test replacement for the Headphones plugin.
-It creates the registered panel and invokes the actual public context-menu,
+It creates the registered individual widgets and invokes the actual public context-menu,
 shortcut, widget and configuration paths. Fooyin's real main PlayerController and
 engine play concurrently through an explicit-device Qt test output backend.
 
@@ -402,7 +418,7 @@ Normal main-track play-count events are allowed during extended playback; any
 preview-track event fails the test.
 It requires main output frames to keep increasing while preview is paused. It
 also exercises real configured keyboard shortcuts with Vim Motions loaded when
-requested, panel recreation, same-ID Apply, changed-device stop, and no autoplay
+requested, widget recreation, same-ID Apply, changed-device stop, and no autoplay
 after restoring device settings.
 
 Built with `BUILD_TESTING=ON`, the driver lives under

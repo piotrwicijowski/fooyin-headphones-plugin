@@ -25,6 +25,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QToolButton>
 
 using namespace Qt::StringLiterals;
 using namespace Fooyin;
@@ -149,7 +150,7 @@ private Q_SLOTS:
         QCOMPARE(messages.count(u"Shutdown complete"_s), 1);
     }
 
-    void loadedPluginRegistersPanelActionsAndSharedConfiguration()
+    void loadedPluginRegistersWidgetsActionsAndSharedConfiguration()
     {
         QTemporaryDir dir;
         SettingsManager settings {dir.filePath(u"settings.ini"_s)};
@@ -176,16 +177,15 @@ private Q_SLOTS:
         guiServices.widgetProvider = widgets.get();
         gui->initialise(guiServices);
         const auto catalogue = widgets->widgetCatalogue();
-        QCOMPARE(catalogue.size(), size_t {4});
+        QCOMPARE(catalogue.size(), size_t {5});
         for(const auto& entry : catalogue) {
             QCOMPARE(entry.categories, QStringList {u"Headphones plugin"_s});
         }
-        QVERIFY(widgets->widgetExists(u"HeadphonesPreview"_s));
-        auto* panel = widgets->createWidget(u"HeadphonesPreview"_s);
-        QVERIFY(panel);
+        QVERIFY(!widgets->widgetExists(u"HeadphonesPreview"_s));
         QVERIFY(!widgets->createWidget(u"HeadphonesPreview"_s));
         const QStringList controlIds {u"HeadphonesPlayerControls"_s, u"HeadphonesSeekBar"_s,
-                                       u"HeadphonesVolumeControls"_s};
+                                       u"HeadphonesVolumeControls"_s, u"HeadphonesOutputDevice"_s,
+                                       u"HeadphonesTrackInfo"_s};
         std::vector<QPointer<FyWidget>> controls;
         for(const auto& id : controlIds) {
             QVERIFY(widgets->widgetExists(id));
@@ -193,11 +193,15 @@ private Q_SLOTS:
             QVERIFY(control);
             QCOMPARE(control->layoutName(), id);
             controls.emplace_back(control);
+            auto* another = widgets->createWidget(id);
+            QVERIFY(another);
+            QVERIFY(another != control);
+            delete another;
         }
         auto* command = actions.command("Headphones.PreviewSelected");
         QVERIFY(command);
         QVERIFY(command->defaultShortcuts().isEmpty());
-        auto* volume = panel->findChild<QSlider*>(u"Headphones.Volume"_s);
+        auto* volume = controls[2]->findChild<QSlider*>(u"Headphones.Volume"_s);
         QVERIFY(volume);
         volume->setValue(37);
         QCOMPARE(settings.value(u"Headphones/Volume").toDouble(), 0.37);
@@ -210,20 +214,28 @@ private Q_SLOTS:
             }
         }
         QVERIFY(dialog);
-        panel->findChild<QPushButton*>(u"Headphones.Configure"_s)->click();
+        auto* playerControls = controls.front().data();
+        auto* configureButton = playerControls->findChild<QToolButton*>(u"Headphones.Configure"_s);
+        QVERIFY(configureButton);
+        QVERIFY(configureButton->isHidden());
+        playerControls->loadLayoutData({{u"ShowConfigure"_s, true}});
+        QVERIFY(!configureButton->isHidden());
+        QVERIFY(configureButton->isEnabled());
+        dialog->hide();
+        configureButton->click();
+        QVERIFY(dialog->isVisible());
         int count {0};
         for(auto* widget : QApplication::topLevelWidgets()) {
             count += widget->objectName() == u"Headphones.Settings";
         }
         QCOMPARE(count, 1);
-        QPointer<QWidget> oldPanel {panel};
-        delete panel;
-        panel = widgets->createWidget(u"HeadphonesPreview"_s);
-        QVERIFY(panel);
-        QCOMPARE(panel->findChild<QSlider*>(u"Headphones.Volume"_s)->value(), 37);
-        QPointer<QWidget> recreated {panel};
+        QPointer<FyWidget> oldVolume {controls[2]};
+        delete controls[2].data();
+        QVERIFY(oldVolume.isNull());
+        controls[2] = widgets->createWidget(u"HeadphonesVolumeControls"_s);
+        QVERIFY(controls[2]);
+        QCOMPARE(controls[2]->findChild<QSlider*>(u"Headphones.Volume"_s)->value(), 37);
         plugin->shutdown();
-        QVERIFY(recreated.isNull());
         for(const auto& control : controls) {
             QVERIFY(control.isNull());
         }
@@ -293,8 +305,9 @@ private Q_SLOTS:
         gui->initialise(guiServices);
 
         auto layout = std::make_unique<QSplitter>();
-        const QStringList ids {u"HeadphonesPreview"_s, u"HeadphonesPlayerControls"_s,
-                               u"HeadphonesSeekBar"_s, u"HeadphonesVolumeControls"_s};
+        const QStringList ids {u"HeadphonesPlayerControls"_s,
+                               u"HeadphonesSeekBar"_s, u"HeadphonesVolumeControls"_s,
+                               u"HeadphonesOutputDevice"_s, u"HeadphonesTrackInfo"_s};
         std::vector<QPointer<FyWidget>> panels;
         QJsonArray beforeQuit;
         for(const auto& id : ids) {

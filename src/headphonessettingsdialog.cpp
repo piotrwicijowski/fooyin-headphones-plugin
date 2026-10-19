@@ -37,7 +37,7 @@ HeadphonesSettingsDialog::HeadphonesSettingsDialog(HeadphonesSettings& settings,
     layout->addWidget(m_combo);
     auto* note = new QLabel(tr("Choose a separately addressable device different from fooyin’s main output. "
                                "OS audio policy can reroute streams on disconnect; verify your routing setup. "
-                               "Preview volume is controlled in the Headphones Preview panel."),
+                               "Preview volume is controlled in the Headphones Volume Controls widget."),
                             this);
     note->setWordWrap(true);
     layout->addWidget(note);
