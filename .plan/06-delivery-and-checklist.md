@@ -58,8 +58,8 @@ testing its runtime dependency resolution and licence obligations.
 
 ### M2: headless preview engine
 
-- [ ] Independent controller, worker/source ownership, bounded buffer, fake output.
-- [ ] Replacement/cancellation/segment/seek tests pass without hardware.
+- [x] Independent controller, worker/source ownership, bounded buffer, fake output.
+- [x] Replacement/cancellation/segment/seek tests pass without hardware.
 
 ### M3: independent audible output
 

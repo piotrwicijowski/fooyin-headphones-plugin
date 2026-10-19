@@ -29,11 +29,33 @@ else()
 endif()
 include(cmake/HeadphonesFFmpeg.cmake)
 
+find_package(Threads REQUIRED)
+add_library(HeadphonesPreviewEngine STATIC
+    src/previewtypes.h
+    src/previewoutput.h
+    src/previewpcmbuffer.h src/previewpcmbuffer.cpp
+    src/previewsource.h src/previewsource.cpp
+    src/previewdecoderworker.h src/previewdecoderworker.cpp
+    src/previewcontroller.h src/previewcontroller.cpp)
+set_target_properties(HeadphonesPreviewEngine PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES)
+target_include_directories(HeadphonesPreviewEngine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(HeadphonesPreviewEngine PUBLIC Fooyin::Core Qt6::Core Threads::Threads)
+target_compile_definitions(HeadphonesPreviewEngine PUBLIC QT_NO_KEYWORDS)
+if(MSVC)
+    target_compile_options(HeadphonesPreviewEngine PRIVATE /W4)
+else()
+    target_compile_options(HeadphonesPreviewEngine PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 set(HEADPHONES_SOURCES
     src/headphonesplugin.cpp
     src/headphonesplugin.h
     src/headphoneslog.h)
 set(HEADPHONES_DEPENDS
+    HeadphonesPreviewEngine
     Fooyin::Core Fooyin::Gui Fooyin::Utils
     Qt6::Core Qt6::Widgets Qt6::Multimedia Qt6::Sql
     Headphones::swresample Headphones::avutil)

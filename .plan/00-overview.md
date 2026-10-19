@@ -1,7 +1,7 @@
 # Headphones preview plugin: implementation plan
 
-Status: Phase 1 complete (project scaffold, build workflow, and lifecycle smoke
-validation). Phase 2, session and decoding, is the next unfinished ticket.
+Status: Phases 1–2 complete (project/build workflow and headless preview engine).
+Phase 3, QAudioSink output, conversion, and devices, is the next unfinished ticket.
 
 ## Goal and confirmed decisions
 

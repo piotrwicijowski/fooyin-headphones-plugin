@@ -2,6 +2,7 @@
 #include "headphonesplugin.h"
 
 #include "headphoneslog.h"
+#include "previewcontroller.h"
 
 #include <QCoreApplication>
 
@@ -22,12 +23,15 @@ HeadphonesPlugin::~HeadphonesPlugin()
     shutdown();
 }
 
-void HeadphonesPlugin::initialise(const CorePluginContext& /*context*/)
+void HeadphonesPlugin::initialise(const CorePluginContext& context)
 {
     if(m_shutdown || m_coreInitialised) {
         return;
     }
 
+    // One shared session service; the real explicitly-selected output is wired
+    // in Phase 3. An absent output can never fall back to the system default.
+    m_controller      = std::make_unique<PreviewController>(makePreviewSourceFactory(context.audioLoader), nullptr);
     m_coreInitialised = true;
     qCDebug(HEADPHONES) << "Core initialised";
 }
@@ -52,7 +56,11 @@ void HeadphonesPlugin::shutdown()
         return;
     }
 
-    m_shutdown        = true;
+    m_shutdown = true;
+    if(m_controller) {
+        m_controller->shutdown();
+        m_controller.reset();
+    }
     m_guiInitialised  = false;
     m_coreInitialised = false;
     qCDebug(HEADPHONES) << "Shutdown complete";

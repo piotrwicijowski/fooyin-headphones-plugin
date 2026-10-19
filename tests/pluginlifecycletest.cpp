@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fakes/plugincontexts.h"
 
+#include <core/engine/audioloader.h>
 #include <core/plugins/coreplugin.h>
 #include <core/plugins/plugin.h>
 #include <gui/plugins/guiplugin.h>
@@ -132,6 +133,26 @@ private Q_SLOTS:
         QVERIFY(loader.unload()); // Destructor is also a shutdown path.
         QCOMPARE(messages.count(u"GUI initialised"_s), 1);
         QCOMPARE(messages.count(u"Shutdown complete"_s), 1);
+    }
+
+    void retainsLoaderUntilShutdown()
+    {
+        QPluginLoader loader {pluginPath};
+        loader.setLoadHints({});
+        auto* root = loader.instance();
+        QVERIFY2(root, qPrintable(loader.errorString()));
+        auto* core   = qobject_cast<CorePlugin*>(root);
+        auto* plugin = qobject_cast<Plugin*>(root);
+        QVERIFY(core && plugin);
+        auto context                          = coreContext();
+        context.audioLoader                   = std::make_shared<AudioLoader>();
+        std::weak_ptr<AudioLoader> weakLoader = context.audioLoader;
+        core->initialise(context);
+        context.audioLoader.reset();
+        QVERIFY(!weakLoader.expired());
+        plugin->shutdown();
+        QVERIFY(weakLoader.expired());
+        QVERIFY(loader.unload());
     }
 
     void applicationQuit()

@@ -149,12 +149,90 @@ for a public lifetime contract rather than relying on private plugin-manager API
 
 ## Tests and acceptance
 
-- [ ] Fake-source/output tests cover load, pause/resume, stop, replacement, error,
+- [x] Fake-source/output tests cover load, pause/resume, stop, replacement, error,
   delayed open, stale completion, and cancellation while the PCM queue is full.
-- [ ] Segment tests cover offsets, boundary-straddling blocks, seek clamping, and
+- [x] Segment tests cover offsets, boundary-straddling blocks, seek clamping, and
   unseekable input.
-- [ ] Loader bundle survives until decoder stop; teardown occurs once on the
+- [x] Loader bundle survives until decoder stop; teardown occurs once on the
   owning worker thread.
-- [ ] Slow decoder operations do not prevent immediate output reset or GUI events.
-- [ ] Main transport/queue APIs are absent from the preview controller's dependency
+- [x] Slow decoder operations do not prevent immediate output reset or GUI events.
+- [x] Main transport/queue APIs are absent from the preview controller's dependency
   surface; main playback is not required for preview to operate.
+
+## Implementation decisions
+
+- `HeadphonesPreviewEngine` is a position-independent static implementation
+  library shared by the plugin and its tests. `HeadphonesPlugin` owns exactly one
+  controller and retains the core context's public AudioLoader through the
+  source factory. No output is attached until Phase 3, so plugin load remains idle.
+- One dedicated `std::thread` owns all source/decoder operations. A replaceable
+  pending request coalesces rapid controls; each generation owns its cancellation
+  state, configuration handshake, and PCM queue. Worker notifications are queued
+  to the lifetime-bound controller; stale open notifications hold weak session
+  references, so they do not retain abandoned PCM allocations.
+- The native-format ring holds 500 ms of audio, with an 8 MiB hard limit and 40 ms
+  startup reserve. Only producer backpressure waits. Controller pumping copies
+  outside sink calls, preserves partial-frame writes, and limits work per tick.
+  Invalid mono/stereo layouts and rates above 768 kHz fail explicitly.
+- Seek reopens the source rather than reusing an aborted decoder. This also
+  discards pending decoder PCM and provides a clean seam for converter reset in
+  Phase 3. Native PCM is transported unchanged in this phase; negotiated output
+  and streaming conversion are introduced together in Phase 3.
+- Direct fractional-sample millisecond seeks can round differently from PCM
+  clipping: the actual host FFmpeg decoder returned frame 1191 for 27 ms at
+  44.1 kHz, while floor-based frame coordinates expect 1190. The worker now seeks
+  to `absoluteMs - absoluteMs % (1000 / gcd(rate, 1000))` and discards exact frames
+  to the requested coordinate. This requires less than one second of worker-side
+  preroll and fixes the real fixture without private headers or core changes.
+  Bounded lengths subtract absolute frame coordinates, avoiding per-block or
+  segment-offset rounding drift.
+- NeedMoreInput retries use cancellation-aware 10 ms waits and a two-second
+  persistent-starvation deadline. Failed/malformed/changing input formats become
+  recoverable errors. Whole-file EOF ignores approximate duration metadata.
+- A session abort mutex protects only source publication/lifetime and prompt
+  `requestAbort()`, never open/read/seek. Source stop/destruction and complete
+  LoadedDecoder bundle release happen on the worker before its factory releases
+  AudioLoader. Loader open itself remains non-interruptible through the public
+  interface; shutdown joins safely rather than detaching or terminating it.
+
+## Completion evidence (2026-10-18)
+
+- Baseline: Debian 13 x86_64, GCC 14.2.0, Qt 6.8.2, CMake 3.31.6, fooyin
+  0.13.1 at `bb8d9f037`, existing sibling `build-rebase-agent`. The same staged
+  Qt Multimedia dependency prefix documented in Phase 1 was used.
+- Debug plugin/test builds and the RelWithDebInfo `build-release-agent` build
+  passed. `make -j4 check PLUGIN_CONFIG_PRESET=agent
+  FOOYIN_BUILD_DIR=/workspace/fooyin/build-rebase-agent
+  CMAKE_ARGS=-DQt6Multimedia_DIR=/tmp/opencode/headphones-deps/root/usr/lib/x86_64-linux-gnu/cmake/Qt6Multimedia
+  TEST_ARGS=-V` passed all 3 CTest suites: plugin lifecycle 9, engine 38, and
+  public-source adapter 6 Qt Test checks (53 total, including suite setup/cleanup).
+- Gated fake tests prove immediate output reset and GUI heartbeat delivery while
+  open remains blocked; cross-thread read abort; stale queued errors and old EOF;
+  latest A/B/C replacement; full-queue cancellation; and shutdown without GUI
+  callback delivery. Ownership counters verify stop/destruction once per opened
+  source on the owning thread. Distinct sample patterns verify reset/replacement
+  and seek isolation rather than only counting writes.
+- Public AudioLoader integration registers a WAV fixture decoder and verifies
+  actual CUE/chapter samples, NoLooping with seeking enabled, nonconcurrent and
+  invalid-format rejection, live input at decoder stop/destruction, device
+  teardown, and release of the loader only after worker shutdown.
+- A temporary public-API probe outside the repository ran inside the matching
+  fooyin process with isolated HOME/XDG paths, offscreen Qt, and fake output. It
+  decoded generated 44.1 kHz S16 mono WAV segments through the host's registered
+  decoder. After the anchor fix, every sample matched: CUE offset 10 ms/duration
+  17 ms yielded 749 frames (21 ms startup); chapter offset 27 ms/duration 13 ms
+  yielded 574 frames (11 ms startup). These are single-run observations, not
+  general latency guarantees. Exit with a new open queued returned status 0;
+  joined worker shutdown measured 0 ms at millisecond timer resolution.
+- Host exit ordering was inspected: plugin constructor connections to
+  `aboutToQuit` are made during startup, before `main.cpp` registers GUI/core
+  shutdown and provider unloading. The active host probe and plugin lifecycle
+  test exercise that early cleanup path. In this host version, disabling plugins
+  persists changes and offers an application restart (`pluginspage.cpp`);
+  `unloadPlugins()` is used only by core application shutdown. No supported live
+  decoder-provider unload path was found. A future live-unload feature would
+  require an explicit public provider-lifetime contract.
+- `clang-format --dry-run --Werror` and `git diff --check` passed. No private
+  fooyin headers or main transport/queue dependencies were introduced. Audible
+  output, rate conversion, actual routing/device loss, installed-SDK delivery,
+  and broader decoder-format fixtures remain their respective later phases.

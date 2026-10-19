@@ -21,6 +21,14 @@ assembles the end-to-end evidence needed to use the plugin during a party.
 
 ## Suggested automated suites
 
+Current Phase 2 baseline: `headphones.plugin-lifecycle`,
+`headphones.preview-engine`, and `headphones.preview-source` are implemented
+and registered with CTest. They cover the headless transport, gated cancellation,
+segment/seek/sample correctness, public AudioLoader ownership, and partial/full
+shutdown scenarios below. The remaining suites extend this foundation as audio
+conversion/output and UI features land. See Phase 2 for actual verification
+evidence and the sibling-build override used in this workspace.
+
 ### `previewcontrollertest.cpp`
 
 - Load, replace, stop, repeated stop, play/pause, restart retained track, error

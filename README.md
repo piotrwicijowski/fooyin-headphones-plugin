@@ -1,10 +1,55 @@
 # Headphones Preview for fooyin
 
 An external plugin for independent headphone preview while fooyin continues
-playing its main output. **Current status: Phase 1 development scaffold.** The
-plugin loads and shuts down; preview transport, audio output, device settings,
-actions, and the layout panel are planned in [the implementation plan](.plan/00-overview.md).
-Loading this version does not create an audio output or start playback.
+playing its main output. **Current status: Phase 2 headless preview engine.** The
+plugin owns one independent session controller, decoder worker, and bounded PCM
+pipeline. Qt audio output/device selection follow in Phase 3; actions, settings,
+and the layout panel follow in Phase 4. See [the implementation plan](.plan/00-overview.md).
+The installed plugin currently loads idle with no output attached; its engine is
+exercised through deterministic fake output and real decoder integration checks.
+
+## Preview engine contract
+
+The engine accepts ordinary local mono/stereo files, including seekable CUE and
+chapter segments. It rejects remote, virtual/CD, and archive-backed tracks,
+nonconcurrent decoders, unsupported channel layouts, malformed PCM, and runtime
+format changes. Phase 2 carries the decoder's native PCM format unchanged;
+device format negotiation and streaming conversion/resampling are Phase 3 work.
+
+| Command/event | Behaviour |
+| --- | --- |
+| `previewTrack(track)` | Replace the previous session and start at logical position zero; the same track also restarts |
+| `playPause()` | Pause/resume; while loading/buffering, remember the requested pause; from Stopped/Error, explicitly restart the retained track if output is available |
+| `stop()` | Immediately reset output and discard pending/queued audio, cancel work, reset position to zero, retain display/restart metadata |
+| `seek(relativeMs)` | Accept only an active seekable preview, clamp to the known duration and safe timeline, reopen at the latest requested target, preserve paused state |
+| Natural EOF | Drain only current-session PCM, then stop at position zero; never advance selection or playlists |
+| Output change/loss | Discard preview; reconnecting or applying output settings never starts playback |
+
+Seeking reports whether the request was accepted; its applied position is
+published after worker startup. The public decoder's `seek()` returns no backend
+success/failure result, so this API cannot diagnose every decoder-specific seek
+failure. To avoid fractional-sample millisecond rounding, the worker seeks to a
+preceding frame-aligned millisecond anchor and discards exact preroll frames.
+Bounded segment endpoints use source frame coordinates, clipped before any
+future conversion. Whole files end at actual decoder EOF, independently of
+approximate metadata duration.
+
+The GUI-thread controller exposes copied state snapshots and has no dependency
+on the main player, queue, main volume, or output profiles. Source construction,
+file I/O, decoding, seeking, and teardown all run on one dedicated worker. Each
+generation owns a frame-aligned 500 ms ring buffer (hard capacity limit 8 MiB),
+with a 40 ms startup reserve and cancellation-aware producer backpressure. Output
+pumping is bounded and never waits for input; zero/partial writes retain their
+unwritten bytes. Persistent local-source starvation fails after two seconds
+instead of spinning. Native sample rates above 768 kHz are rejected.
+
+Stop/replacement/seek invalidate generations immediately, and queued stale
+results cannot resurrect a session. Rapid seeks replace the pending worker
+request. A published decoder can be aborted safely without racing destruction.
+AudioLoader's synchronous open/init has no public cancellation token: ordinary
+controls silence output immediately while a delayed open finishes, and shutdown
+waits for that work to finish before releasing loader/provider references.
+`aboutToQuit`, explicit plugin shutdown, and destruction share idempotent cleanup.
 
 ## Requirements and compatibility
 
@@ -133,11 +178,19 @@ ctest --preset test-agent
 # Or: make test FOOYIN_BUILD_DIR=/path/to/fooyin/build-agent
 ```
 
-The offscreen Qt Test suite loads the real module through `QPluginLoader` and
-uses inert public host contexts. It checks metadata/interface discovery,
-one-time core and GUI initialisation, shutdown before/after partial
-initialisation, duplicate controls, late callbacks, destructor cleanup, and
-`aboutToQuit` cleanup. It requires no audio hardware.
+Three CTest suites run without audio hardware or an audio server:
+
+- `headphones.plugin-lifecycle` loads the real module using `QPluginLoader`,
+  checking metadata/interfaces, partial/duplicate initialisation, retained loader
+  lifetime, late callbacks, destructor cleanup, and `aboutToQuit` cleanup.
+- `headphones.preview-engine` uses gated fake sources/output for transport,
+  delayed-open/read cancellation, full-buffer shutdown, stale results/EOF,
+  replacement, exact segment boundaries, fractional-frame seek rounding,
+  pause-preserving/coalesced seeks, starvation, malformed formats, partial-frame
+  writes, device readiness, errors/recovery, and processed-output positioning.
+- `headphones.preview-source` registers a WAV fixture decoder with the real public
+  AudioLoader, verifies CUE/chapter samples, and checks worker-thread teardown,
+  decoder options, concurrent-decoding rejection, and input/loader ownership.
 
 The `fy.headphones` category disables debug messages by default. Enable them with
 `QT_LOGGING_RULES='fy.headphones.debug=true'` or `make run-debug` (which defaults
@@ -155,13 +208,17 @@ GPL-3.0-or-later; see [LICENSE](LICENSE).
 
 ## Verified development setup
 
-Phase 1 was validated on Debian 13 x86_64 with GCC 14.2.0, CMake 3.31.6,
+Phases 1–2 were validated on Debian 13 x86_64 with GCC 14.2.0, CMake 3.31.6,
 Qt 6.8.2, libswresample 5.3.100, libavutil 59.39.100, and fooyin 0.13.1
 (`bb8d9f037`, sibling `build-rebase-agent`). Debug and RelWithDebInfo builds,
-the offscreen lifecycle suite (8 passed), parallel Make workflows, path
-overrides, and a real fooyin load/normal exit passed. The container's missing
+all three automated suites (53 Qt Test checks passed), parallel Make workflows,
+path overrides, and a real fooyin load/normal exit passed. A temporary host probe
+also used fooyin's registered decoder on a generated 44.1 kHz WAV: CUE and chapter
+segments matched all expected samples (749 and 574 frames), and shutdown with a
+fresh open queued completed normally. The container's missing
 Qt Multimedia packages were staged outside the project for these checks.
 The installed-SDK delivery build, Qt 6.4 runtime, other platforms, and actual
 audio/device routing remain later-phase validation. See the
 [Phase 1 evidence](.plan/01-project-and-build.md#completion-evidence-2026-10-18)
-for details.
+and [Phase 2 evidence](.plan/02-session-and-decoding.md#completion-evidence-2026-10-18)
+for details, including the tested host's restart-based plugin-disable policy.

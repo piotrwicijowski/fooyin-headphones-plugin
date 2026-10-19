@@ -7,7 +7,11 @@
 
 #include <QObject>
 
+#include <memory>
+
 namespace Fooyin::Headphones {
+
+class PreviewController;
 
 class HeadphonesPlugin : public QObject,
                          public Plugin,
@@ -27,6 +31,7 @@ public:
     void shutdown() override;
 
 private:
+    std::unique_ptr<PreviewController> m_controller;
     bool m_coreInitialised {false};
     bool m_guiInitialised {false};
     bool m_shutdown {false};
