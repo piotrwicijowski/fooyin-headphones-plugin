@@ -91,7 +91,7 @@ Alternatively, run `make test FOOYIN_BUILD_DIR=/path/to/fooyin/build`.
 | `headphones.preview-source` | Public AudioLoader integration, CUE/chapter samples, decoder options, concurrent-decoding rejection, ownership, and worker-thread teardown. |
 | `headphones.preview-converter` | Sample containers and scaling, channel gains, streaming resampling, continuity, tail flushing, reset, and allocation bounds. |
 | `headphones.preview-output` | Format negotiation, opaque device IDs, hotplug, sink epochs, pause/drain clocks, backend recovery, and persisted volume/device settings. |
-| `headphones.gui` | Actions and selection targets, settings Apply/Cancel, hotplug, scrubbing, volume, and widget recreation. |
+| `headphones.gui` | Actions and selection targets, volume-step bounds and shared mute restoration, settings/dialog-provider lifetime, hotplug, scrubbing, and widget recreation. |
 | `headphones.script-variables` | Real script-parser evaluation, metadata fallbacks, state, track/segment indicators, refresh notifications, and concurrent callbacks. |
 
 ## Same-process integration validation
@@ -101,7 +101,25 @@ Headphones Preview. It invokes the plugin's real context-menu, shortcut, widget,
 and configuration paths while fooyin's main player runs through an explicit-device
 Qt test output backend. It checks main track, playlist, queue, output, and volume
 state; continued main output during preview pause; device changes; widget
-recreation; and shutdown with preview active.
+recreation; and shutdown with preview active. Keyboard navigation checks matching
+selection and the retained entry's visible rectangle after reorder, while paused
+and after Stop, then exercises segment-aware target resolution, cancellation,
+entry/playlist removal, and a missing target. Main playback, active playback
+playlist, queue, and paused preview position must remain unchanged.
+
+Preview-track navigation uses the existing public
+`CurrentPlaylistController::changeCurrentPlaylist()`/`selectTracks()` and
+`PlaylistHandler::ensurePlaylistItemVisible()` APIs. A bounded, cancellable retry
+handles deferred playlist-view loading, re-resolving entry identity on each try.
+Selection is confirmed through public `TrackSelectionController` metadata.
+Fooyin's matching rules may select additional duplicate/segment rows, and its
+public API does not guarantee playlist keyboard focus. Existing filters are
+respected. The plugin uses only public headers and requires no host modifications.
+
+Shortcut subgroups use plugin-specific names (Headphone playback, Headphone seek,
+Headphone tracks, Headphone volume) because the host keys categories by label
+across all parents. This keeps them separate from main-player groups without
+changing the host shortcut model.
 
 The driver is built with `BUILD_TESTING=ON` under
 `build-test-agent/tests/inprocess/`. It is not installed or run by ordinary CTest.

@@ -197,6 +197,19 @@ private Q_SLOTS:
         guiServices.actionManager  = &actions;
         guiServices.widgetProvider = widgets.get();
         gui->initialise(guiServices);
+        const QStringList additionalIds {u"Headphones.Volume.Up"_s, u"Headphones.Volume.Down"_s,
+                                         u"Headphones.Volume.Mute"_s, u"Headphones.Volume.Unmute"_s,
+                                         u"Headphones.Volume.ToggleMute"_s, u"Headphones.Configure"_s,
+                                         u"Headphones.Tracks.FocusPreviewed"_s};
+        for(const auto& id : additionalIds) {
+            auto* command = actions.command(Id {id});
+            QVERIFY(command);
+            QVERIFY(command->defaultShortcuts().isEmpty());
+        }
+        // Configuration and volume actions also work before creating any widgets.
+        actions.command("Headphones.Volume.Mute")->action()->trigger();
+        actions.command("Headphones.Volume.Unmute")->action()->trigger();
+        actions.command("Headphones.Configure")->action()->trigger();
         const auto catalogue = widgets->widgetCatalogue();
         QCOMPARE(catalogue.size(), size_t {5});
         for(const auto& entry : catalogue) {
@@ -265,6 +278,10 @@ private Q_SLOTS:
             QVERIFY(!widgets->createWidget(id));
         }
         QVERIFY(!actions.command("Headphones.Tracks.PreviewSelected"));
+        for(const auto& id : additionalIds) {
+            QVERIFY(!actions.command(Id {id}));
+        }
+        provider->showSettings(nullptr); // The retained host adapter safely handles a destroyed provider.
         QVERIFY(!widgets->createWidget(u"HeadphonesPreview"_s));
         provider.reset();
         widgets.reset();

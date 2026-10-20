@@ -125,21 +125,46 @@ All layout widget instances control the same preview.
 ## Keyboard shortcuts
 
 Assign bindings in fooyin's shortcut settings under **Headphones Preview**.
-There are no default bindings.
+Commands are grouped into **Headphone playback**, **Headphone seek**,
+**Headphone tracks**, and **Headphone volume**;
+**Configure** is directly under Headphones Preview. Fooyin sorts commands
+alphabetically within each group. There are no default bindings.
 
-| Command | Action ID |
-| --- | --- |
-| Preview in headphones | `Headphones.Tracks.PreviewSelected` |
-| Play/pause headphone preview | `Headphones.Playback.PlayPause` |
-| Play headphone preview | `Headphones.Playback.Play` |
-| Pause headphone preview | `Headphones.Playback.Pause` |
-| Stop headphone preview | `Headphones.Playback.Stop` |
-| Seek headphone preview backward (small step) | `Headphones.Seek.Backward.Small` |
-| Seek headphone preview forward (small step) | `Headphones.Seek.Forward.Small` |
-| Seek headphone preview backward (large step) | `Headphones.Seek.Backward.Large` |
-| Seek headphone preview forward (large step) | `Headphones.Seek.Forward.Large` |
+| Group | Command | Action ID |
+| --- | --- | --- |
+| — | Configure | `Headphones.Configure` |
+| Headphone playback | Pause | `Headphones.Playback.Pause` |
+| Headphone playback | Play | `Headphones.Playback.Play` |
+| Headphone playback | Play/Pause | `Headphones.Playback.PlayPause` |
+| Headphone playback | Stop | `Headphones.Playback.Stop` |
+| Headphone seek | Seek backward (large step) | `Headphones.Seek.Backward.Large` |
+| Headphone seek | Seek backward (small step) | `Headphones.Seek.Backward.Small` |
+| Headphone seek | Seek forward (large step) | `Headphones.Seek.Forward.Large` |
+| Headphone seek | Seek forward (small step) | `Headphones.Seek.Forward.Small` |
+| Headphone tracks | Preview selected | `Headphones.Tracks.PreviewSelected` |
+| Headphone tracks | Show previewed track | `Headphones.Tracks.FocusPreviewed` |
+| Headphone volume | Mute | `Headphones.Volume.Mute` |
+| Headphone volume | Toggle mute | `Headphones.Volume.ToggleMute` |
+| Headphone volume | Unmute | `Headphones.Volume.Unmute` |
+| Headphone volume | Volume down | `Headphones.Volume.Down` |
+| Headphone volume | Volume up | `Headphones.Volume.Up` |
 
 Seek commands use fooyin's small and large increments from **Playback → General**.
+
+Volume commands adjust the shared headphone volume by **5 percentage points**,
+clamped to 0–100%. Mute remembers the last nonzero level; Unmute restores it only
+while muted. These commands and Configure work without preview widgets or a
+configured output, and do not start playback.
+
+**Show previewed track** switches to the preview track's playlist, selects matching
+tracks, and reveals the retained entry, including while paused and after Stop.
+It prefers the original entry, even after reordering. If that entry was removed,
+it looks for the same track/segment in the visible playlist, then other loaded
+playlists. If no match exists, it does nothing. Selection follows fooyin's matching
+rules, so additional duplicates or segments from the same file may be selected.
+Keyboard focus is not changed, and existing playlist filters are respected.
+Navigation preserves preview and main playback, the active playback playlist,
+and the queue.
 
 ## Script variables
 

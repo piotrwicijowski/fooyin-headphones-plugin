@@ -30,6 +30,8 @@ public:
     void stop();
     bool seek(int64_t relativeMs);
     void setVolume(double volume);
+    void mute();
+    void unmute();
     void toggleMute();
     void setOutput(std::unique_ptr<PreviewOutput> output);
     void refreshOutput();

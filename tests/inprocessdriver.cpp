@@ -10,16 +10,19 @@
 #include <core/plugins/plugin.h>
 #include <gui/fywidget.h>
 #include <gui/guiconstants.h>
+#include <gui/playlist/currentplaylistcontroller.h>
 #include <gui/plugins/guiplugin.h>
 #include <gui/trackselectioncontroller.h>
 #include <gui/widgetprovider.h>
 #include <gui/widgets/elidedlabel.h>
 #include <utils/actions/actionmanager.h>
 #include <utils/actions/command.h>
+#include <utils/modelutils.h>
 #include <utils/settings/settingsmanager.h>
 #include <utils/stringutils.h>
 
 #include <QApplication>
+#include <QAbstractItemView>
 #include <QAudioSink>
 #include <QComboBox>
 #include <QDialog>
@@ -187,6 +190,8 @@ public:
         m_actions   = context.actionManager;
         m_selection = context.trackSelection;
         m_widgets   = context.widgetProvider;
+        m_currentPlaylist = context.playlistSelection;
+        m_reveals = std::make_unique<QSignalSpy>(m_playlists, &PlaylistHandler::playlistItemEnsureVisible);
         connect(&m_timer, &QTimer::timeout, this, &HeadphonesInProcessDriver::tick);
         m_timer.start(50);
         m_elapsed.start();
@@ -276,9 +281,11 @@ private:
         return check(m_player->playState() == Player::PlayState::Playing
                          && m_player->currentTrack().filepath() == m_main.filepath(),
                      u"Main playback/track changed"_s)
-            && check(m_player->playbackQueue().items() == m_queue.items
+             && check(m_player->playbackQueue().items() == m_queue.items
                          && m_player->playbackQueue().currentIndex() == m_queue.currentIndex,
-                     u"Main queue changed"_s)
+                      u"Main queue changed"_s)
+             && check(m_playlists->activePlaylist() && m_playlists->activePlaylist()->id() == m_activePlaylist,
+                      u"Active playback playlist changed"_s)
             && check(m_settings->value<Settings::Core::OutputVolume>() == m_mainVolume
                          && m_settings->value<Settings::Core::AudioOutput>() == m_mainOutput,
                      u"Main output/volume settings changed"_s)
@@ -287,11 +294,18 @@ private:
                          && m_playStates->isEmpty() && m_volumeEvents == 0 && m_outputSettingEvents == 0,
                      u"Preview emitted main transport/track/output events"_s);
     }
-    void previewMenu(const Track& track)
+    void previewMenu(const Track& track, const std::optional<PlaylistTrack>& origin = {})
     {
         auto menu = std::make_unique<QMenu>();
         TrackSelection selection;
         selection.tracks = {track, m_other};
+        if(origin) {
+            selection.tracks = {track};
+            selection.playlistId = origin->playlistId;
+            selection.playlistIndexes = {origin->indexInPlaylist};
+            selection.playlistEntryIds = {origin->entryId};
+            selection.playlistBacked = true;
+        }
         m_selection->addTrackContextMenu(menu.get(), selection);
         auto* action = menu->findChild<QAction*>(u"Headphones.Tracks.PreviewSelected.Context"_s);
         if(!check(action && action->isEnabled(), u"Actual plugin context action missing/disabled"_s)) {
@@ -306,6 +320,57 @@ private:
         m_selection->changeSelectedTracks(&context, changed);
         otherView.setFocus();
         action->trigger();
+    }
+    void snapshotPlaylists()
+    {
+        m_playlistSnapshot.clear();
+        for(const auto* playlist : m_playlists->playlists()) {
+            m_playlistSnapshot.emplace_back(playlist->id(), playlist->tracks());
+        }
+    }
+    bool navigationMatches(const PlaylistTrack& target, size_t expectedMatches) const
+    {
+        if(m_navigationWait.elapsed() < 250 || m_reveals->isEmpty()) {
+            return false;
+        }
+        const auto selection = m_selection->playlistSelectionTarget(target.playlistId);
+        if(!selection || !selection->context || selection->selection.playlistEntryIds.size() != expectedMatches
+           || std::ranges::find(selection->selection.playlistEntryIds, target.entryId)
+                  == selection->selection.playlistEntryIds.end()) {
+            return false;
+        }
+        const auto& reveal = m_reveals->back();
+        if(qvariant_cast<Playlist*>(reveal[0])->id() != target.playlistId
+           || reveal[1].toInt() != target.indexInPlaylist) {
+            return false;
+        }
+        // Inspect the fixture through Qt's standard view API only. These fixtures
+        // display their entries in playlist order; no private host model roles are used.
+        auto* view = selection->context->widget()->findChild<QAbstractItemView*>();
+        if(!view || !view->selectionModel()) {
+            return false;
+        }
+        auto rows = view->selectionModel()->selectedRows();
+        std::ranges::sort(rows, Utils::sortModelIndexes);
+        const auto& indexes = selection->selection.playlistIndexes;
+        const auto found = std::ranges::find(indexes, target.indexInPlaylist);
+        const auto offset = std::distance(indexes.begin(), found);
+        return found != indexes.end() && offset < rows.size()
+            && view->viewport()->rect().intersects(view->visualRect(rows.at(offset)));
+    }
+    void showPreview()
+    {
+        // The test observes the real host view through Qt's public view API.
+        for(auto* widget : QApplication::allWidgets()) {
+            if(auto* layoutWidget = qobject_cast<FyWidget*>(widget);
+               layoutWidget && layoutWidget->layoutName() == u"Playlist") {
+                widget->window()->activateWindow();
+                break;
+            }
+        }
+        m_reveals->clear();
+        m_navigationWait.start();
+        trigger("Headphones.Tracks.FocusPreviewed");
     }
     void tick()
     {
@@ -373,6 +438,19 @@ private:
                 return;
             }
             m_queue = m_player->playbackQueue().snapshot();
+            m_activePlaylist = m_playlists->activePlaylist()->id();
+            Track segment = m_other;
+            segment.setOffset(1000);
+            segment.setDuration(5000);
+            segment.setSubsong(1);
+            TrackList duplicates(150, m_other);
+            auto* source = m_playlists->createNewPlaylist(u"Headphones focus source"_s, duplicates);
+            m_focusOrigin = *source->playlistTrack(140);
+            auto* fallback = m_playlists->createNewPlaylist(u"Headphones focus fallback"_s, {segment, m_other, m_other});
+            m_focusFallback = *fallback->playlistTrack(1);
+            auto* other = m_playlists->createNewPlaylist(u"Headphones focus other"_s, {segment, m_other});
+            m_focusOther = *other->playlistTrack(1);
+            m_focusEmpty = m_playlists->createNewPlaylist(u"Headphones focus no match"_s, {m_preview})->id();
             for(const auto* playlist : m_playlists->playlists()) {
                 m_playlistSnapshot.emplace_back(playlist->id(), playlist->tracks());
             }
@@ -540,6 +618,110 @@ private:
                           u"Player controls lost the retained display selection"_s)) {
                 return;
             }
+            previewMenu(m_other, m_focusOrigin);
+            m_stage = 100;
+        }
+        else if(m_stage == 100) {
+            if(status() != u"Playing") {
+                return;
+            }
+            trigger("Headphones.Playback.Pause");
+            auto* source = m_playlists->playlistById(m_focusOrigin.playlistId);
+            auto entries = source->playlistTracks();
+            if(!check(entries.size() == 150, u"Focus fixture entries disappeared"_s)) {
+                return;
+            }
+            std::swap(entries[100], entries[140]);
+            m_playlists->replacePlaylistTracks(source->id(), entries);
+            m_focusOrigin = *source->playlistTrack(m_focusOrigin.entryId);
+            m_currentPlaylist->changeCurrentPlaylist(m_focusFallback.playlistId);
+            m_focusPosition = m_panel->findChild<QSlider*>(u"Headphones.Seek"_s)->value();
+            showPreview();
+            m_stage = 101;
+        }
+        else if(m_stage == 101) {
+            if(!navigationMatches(m_focusOrigin, 150)) {
+                return;
+            }
+            if(!mainUnchanged()
+               || !check(status() == u"Paused"
+                             && m_panel->findChild<QSlider*>(u"Headphones.Seek"_s)->value() == m_focusPosition,
+                          u"Navigation changed preview playback or position"_s)) {
+                return;
+            }
+            trigger("Headphones.Playback.Stop");
+            m_currentPlaylist->changeCurrentPlaylist(m_focusFallback.playlistId);
+            showPreview();
+            m_stage = 102;
+        }
+        else if(m_stage == 102) {
+            if(!navigationMatches(m_focusOrigin, 150)) {
+                return;
+            }
+            if(!check(status() == u"Stopped", u"Navigation after Stop restarted preview"_s) || !mainUnchanged()) {
+                return;
+            }
+            m_playlists->removePlaylistTracks(m_focusOrigin.playlistId, {m_focusOrigin.indexInPlaylist});
+            snapshotPlaylists();
+            m_currentPlaylist->changeCurrentPlaylist(m_focusFallback.playlistId);
+            showPreview();
+            m_stage = 103;
+        }
+        else if(m_stage == 103) {
+            // The host's public selectTracks() uses broader equality than
+            // logical segment identity, so it also selects the segment fixture.
+            // The reveal request must still target the original whole-track entry.
+            if(!navigationMatches(m_focusFallback, 3)) {
+                return;
+            }
+            if(!mainUnchanged()) {
+                return;
+            }
+            showPreview();
+            QTest::keyClick(m_panel, Qt::Key_Shift); // A new user interaction cancels the delayed request.
+            m_stage = 105;
+        }
+        else if(m_stage == 105 && m_navigationWait.elapsed() >= 250) {
+            if(!check(m_reveals->isEmpty(), u"User input did not cancel pending navigation"_s) || !mainUnchanged()) {
+                return;
+            }
+            showPreview();
+            // Remove the resolved entry before the asynchronous public selection call.
+            // The row now belongs to another duplicate and must not be used as a stale target.
+            m_playlists->removePlaylistTracks(m_focusFallback.playlistId, {m_focusFallback.indexInPlaylist});
+            snapshotPlaylists();
+            m_stage = 106;
+        }
+        else if(m_stage == 106 && m_navigationWait.elapsed() >= 250) {
+            if(!check(m_reveals->isEmpty(), u"Removed pending entry produced a stale reveal"_s) || !mainUnchanged()) {
+                return;
+            }
+            m_playlists->removePlaylist(m_focusOrigin.playlistId);
+            m_playlists->removePlaylist(m_focusFallback.playlistId);
+            snapshotPlaylists();
+            m_currentPlaylist->changeCurrentPlaylist(m_focusEmpty);
+            showPreview();
+            m_stage = 104;
+        }
+        else if(m_stage == 104) {
+            if(!navigationMatches(m_focusOther, 2)) {
+                return;
+            }
+            if(!mainUnchanged()) {
+                return;
+            }
+            m_playlists->removePlaylist(m_focusOther.playlistId);
+            snapshotPlaylists();
+            m_currentPlaylist->changeCurrentPlaylist(m_focusEmpty);
+            showPreview(); // No matching entry: no mutation, insertion or playlist creation.
+            if(!check(m_currentPlaylist->currentPlaylistId() == m_focusEmpty && status() == u"Stopped",
+                      u"Missing preview track changed the UI or restarted preview"_s) || !mainUnchanged()) {
+                return;
+            }
+            trigger("Headphones.Playback.Play");
+            qInfo() << "HEADPHONES KEYBOARD PASS: original duplicate after reorder, pause/Stop retention, "
+                        "segment-aware targets, cancellation, removal and missing target; "
+                        "public-API selection/reveal and main isolation";
             m_stressWait.start();
             m_stage = 30;
         }
@@ -637,6 +819,7 @@ private:
     SettingsManager* m_settings {nullptr};
     ActionManager* m_actions {nullptr};
     TrackSelectionController* m_selection {nullptr};
+    CurrentPlaylistController* m_currentPlaylist {nullptr};
     WidgetProvider* m_widgets {nullptr};
     std::shared_ptr<AudioLoader> m_loader;
     QPointer<QWidget> m_panel;
@@ -644,9 +827,13 @@ private:
     std::unique_ptr<WidgetContext> m_selectionContext;
     QTimer m_timer;
     QElapsedTimer m_elapsed, m_pauseWait, m_finishWait;
+    QElapsedTimer m_navigationWait;
     QElapsedTimer m_stressWait, m_actionWait;
     int m_previewPosition {0};
     Track m_main, m_preview, m_other;
+    PlaylistTrack m_focusOrigin, m_focusFallback, m_focusOther;
+    UId m_focusEmpty, m_activePlaylist;
+    int m_focusPosition {0};
     PlaybackQueueSnapshot m_queue;
     std::vector<std::pair<UId, TrackList>> m_playlistSnapshot;
     QByteArray m_headId;
@@ -656,6 +843,7 @@ private:
     uint64_t m_pauseFrames {0};
     std::unique_ptr<QSignalSpy> m_transport, m_pauses, m_stops, m_tracks, m_outputs;
     std::unique_ptr<QSignalSpy> m_devices, m_seeks, m_playStates, m_trackPlayed;
+    std::unique_ptr<QSignalSpy> m_reveals;
     int m_volumeEvents {0}, m_outputSettingEvents {0};
 };
 

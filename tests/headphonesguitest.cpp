@@ -44,6 +44,110 @@ class HeadphonesGuiTest : public QObject
 {
     Q_OBJECT
 private Q_SLOTS:
+    void additionalCommandsRegisterAndShareVolumeWithoutOutput()
+    {
+        QTemporaryDir dir;
+        SettingsManager settings {dir.filePath(u"settings.ini"_s)};
+        QMainWindow window;
+        ActionManager manager {&settings};
+        manager.setMainWindow(&window);
+        PreviewHarness h;
+        h.create();
+        h.controller->setOutput(nullptr);
+        const auto generation = h.controller->snapshot().generation;
+        const QStringList ids {u"Headphones.Volume.Up"_s, u"Headphones.Volume.Down"_s,
+                               u"Headphones.Volume.Mute"_s, u"Headphones.Volume.Unmute"_s,
+                               u"Headphones.Volume.ToggleMute"_s, u"Headphones.Configure"_s,
+                               u"Headphones.Tracks.FocusPreviewed"_s};
+        {
+            HeadphonesActions actions {*h.controller, &manager};
+            for(const auto& id : ids) {
+                auto* command = manager.command(Id {id});
+                QVERIFY(command);
+                QVERIFY(command->defaultShortcuts().isEmpty());
+                QVERIFY(!command->description().isEmpty());
+                QStringList categories {u"Headphones Preview"_s};
+                if(id.startsWith(u"Headphones.Volume.")) {
+                    categories.append(u"Headphone volume"_s);
+                }
+                else if(id == u"Headphones.Tracks.FocusPreviewed") {
+                    categories.append(u"Headphone tracks"_s);
+                }
+                QCOMPARE(command->categories(), categories);
+            }
+            QVERIFY(!manager.command("Headphones.Tracks.FocusPreviewed")->action()->isEnabled());
+            const auto invoke = [&manager](const char* id) { manager.command(id)->action()->trigger(); };
+            h.controller->setVolume(0.0);
+            invoke("Headphones.Volume.Unmute");
+            QCOMPARE(h.controller->snapshot().volume, 0.25); // Existing default restoration policy.
+            for(int i = 0; i < 5; ++i) {
+                invoke("Headphones.Volume.Down");
+            }
+            QCOMPARE(h.controller->snapshot().volume, 0.0);
+            invoke("Headphones.Volume.Down");
+            QCOMPARE(h.controller->snapshot().volume, 0.0);
+            invoke("Headphones.Volume.Up");
+            QCOMPARE(h.controller->snapshot().volume, 0.05);
+            for(int i = 0; i < 25; ++i) {
+                invoke("Headphones.Volume.Up");
+            }
+            QCOMPARE(h.controller->snapshot().volume, 1.0);
+            h.controller->setVolume(0.37);
+            invoke("Headphones.Volume.Unmute");
+            QCOMPARE(h.controller->snapshot().volume, 0.37);
+            HeadphonesVolumeControl first {*h.controller, nullptr};
+            HeadphonesVolumeControl second {*h.controller, nullptr};
+            invoke("Headphones.Volume.Mute");
+            invoke("Headphones.Volume.Mute");
+            QCOMPARE(first.findChild<QSlider*>(u"Headphones.Volume"_s)->value(), 0);
+            QCOMPARE(second.findChild<QSlider*>(u"Headphones.Volume"_s)->value(), 0);
+            second.findChild<QToolButton*>(u"Headphones.Mute"_s)->click();
+            QCOMPARE(h.controller->snapshot().volume, 0.37);
+            invoke("Headphones.Volume.ToggleMute");
+            invoke("Headphones.Volume.Unmute");
+            invoke("Headphones.Volume.Unmute");
+            QCOMPARE(first.findChild<QSlider*>(u"Headphones.Volume"_s)->value(), 37);
+            invoke("Headphones.Volume.ToggleMute");
+            invoke("Headphones.Volume.ToggleMute");
+            QCOMPARE(h.controller->snapshot().volume, 0.37);
+            QCOMPARE(h.controller->snapshot().state, PreviewState::Stopped);
+            QCOMPARE(h.controller->snapshot().generation, generation);
+        }
+        for(const auto& id : ids) {
+            QVERIFY(!manager.command(Id {id}));
+        }
+    }
+
+    void configureCommandSharesDialogAndGuardsProviderLifetime()
+    {
+        QTemporaryDir dir;
+        SettingsManager manager {dir.filePath(u"settings.ini"_s)};
+        HeadphonesSettings settings {&manager};
+        FakeDeviceCatalogue catalogue;
+        auto provider = std::make_shared<HeadphonesSettingsProvider>(settings, catalogue);
+        auto host = settingsProviderAdapter(provider);
+        PreviewHarness h;
+        h.create();
+        h.controller->setOutput(nullptr);
+        HeadphonesActions actions {*h.controller, nullptr, nullptr, provider};
+        auto* configure = actions.findChild<QAction*>(u"Headphones.Configure"_s);
+        QVERIFY(configure && configure->isEnabled());
+        configure->trigger(); // No widgets or output required.
+        QPointer<QDialog> dialog {provider->createSettings(nullptr)};
+        QVERIFY(dialog && dialog->isVisible());
+        dialog->hide();
+        host->showSettings(nullptr);
+        QCOMPARE(provider->createSettings(nullptr), dialog.data());
+        dialog->hide();
+        configure->trigger();
+        QVERIFY(dialog->isVisible());
+        provider.reset();
+        QVERIFY(dialog.isNull());
+        configure->trigger(); // Expired provider cannot reopen settings or access deleted services.
+        host->showSettings(nullptr);
+        QCOMPARE(h.controller->snapshot().state, PreviewState::Stopped);
+    }
+
     void unavailablePlayerControlsStillOpenConfiguration()
     {
         PreviewHarness h;
@@ -503,7 +607,7 @@ private Q_SLOTS:
             auto* command = manager.command("Headphones.Tracks.PreviewSelected");
             QVERIFY(command);
             QVERIFY(command->defaultShortcuts().isEmpty());
-            QCOMPARE(command->categories(), QStringList {u"Headphones Preview"_s});
+            QCOMPARE(command->categories(), (QStringList {u"Headphones Preview"_s, u"Headphone tracks"_s}));
             TrackSelection selected;
             selected.tracks = {Track {u"first.wav"_s}, Track {u"second.wav"_s}};
             QMenu menu;
@@ -513,6 +617,11 @@ private Q_SLOTS:
             QTRY_COMPARE(first->opens.load(), 1);
             QCOMPARE(second->opens.load(), 0);
             QCOMPARE(h.controller->snapshot().track.filepath(), u"first.wav"_s);
+            auto* focus = actions.findChild<QAction*>(u"Headphones.Tracks.FocusPreviewed"_s);
+            QVERIFY(focus && !focus->isEnabled()); // A retained track without playlist GUI services is safe.
+            const auto generation = h.controller->snapshot().generation;
+            focus->trigger();
+            QCOMPARE(h.controller->snapshot().generation, generation);
             h.controller->stop();
             // Player controls keep the last display selection after focus moves off the view.
             actions.setSelection({}, {Track {u"second.wav"_s}});
@@ -562,7 +671,7 @@ private Q_SLOTS:
             auto* command = manager.command(Id {actionId});
             QVERIFY(command);
             QVERIFY(command->defaultShortcuts().isEmpty());
-            QCOMPARE(command->categories(), QStringList {u"Headphones Preview"_s});
+            QCOMPARE(command->categories(), (QStringList {u"Headphones Preview"_s, u"Headphone seek"_s}));
             auto* action = actions.findChild<QAction*>(actionId);
             QVERIFY(action);
             QVERIFY(!action->isEnabled());
