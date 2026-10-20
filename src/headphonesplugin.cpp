@@ -56,6 +56,7 @@ void HeadphonesPlugin::initialise(const CorePluginContext& context)
     m_settingsManager = context.settingsManager;
     m_preferences     = std::make_unique<HeadphonesSettings>(context.settingsManager);
     m_controller      = std::make_unique<PreviewController>(makePreviewSourceFactory(context.audioLoader), nullptr);
+    m_controller->setReplayGainSettingsManager(context.settingsManager);
     m_controller->setVolume(m_preferences->volume());
     m_controller->setPreviewStartOffsetSeconds(m_preferences->previewStartOffsetSeconds());
     m_variableProvider = std::make_unique<HeadphonesVariableProvider>(*m_controller);

@@ -45,7 +45,7 @@ has its own transport, position, volume, and output device.
 
 Later scope: archive-backed files, remote streams, virtual sources/CDs,
 multichannel input downmixing, output-channel-pair routing on one DJ interface,
-ReplayGain/master DSP parity, waveform displays, cue-point storage, monitoring
+full master DSP parity, waveform displays, cue-point storage, monitoring
 the main mix in headphones, and seamless preview-to-main handoff.
 
 The first release does not automatically enqueue or play a previewed track on
@@ -84,7 +84,7 @@ its own scope, implementation steps, acceptance criteria, and completion status.
 | --- | --- |
 | [07-keyboard-actions.md](07-keyboard-actions.md) | Implemented: volume up/down, mute/unmute/toggle mute, open configuration, and focus the previewed track |
 | [08-preview-start-offset.md](08-preview-start-offset.md) | Implemented: fixed configurable start offset, default 0 seconds |
-| [09-preview-replaygain.md](09-preview-replaygain.md) | Independent preview ReplayGain |
+| [09-preview-replaygain.md](09-preview-replaygain.md) | Implemented: preview ReplayGain using fooyin's shared configuration |
 | [10-multichannel-to-stereo.md](10-multichannel-to-stereo.md) | Channel-layout-aware multichannel input downmixing |
 | [11-output-channel-pair-selection.md](11-output-channel-pair-selection.md) | Route preview to an explicit pair on a multichannel output |
 

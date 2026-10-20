@@ -39,8 +39,9 @@ testing its runtime dependency resolution and licence obligations.
   a track, and invoke Preview in headphones.
 - [ ] Action IDs and shortcut configuration; no default bindings initially.
 - [ ] Exact play/pause/stop/re-preview/seek/multi-selection semantics.
-- [ ] Preview volume is separate; preview does not apply the main DSP/ReplayGain
-  chain or affect the queue/play counts/scrobbling.
+- [ ] Preview volume is separate; preview reuses main ReplayGain configuration
+  in its own pipeline without applying the main DSP chain or affecting the
+  queue/play counts/scrobbling.
 - [ ] Missing-device/disconnect/reconnect behaviour and troubleshooting for no
   output, unsupported formats, backend packages, and OS-level rerouting.
 - [ ] Explain that multiple jacks on one card may be mutually exclusive ports;

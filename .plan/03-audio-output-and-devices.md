@@ -83,9 +83,10 @@ Use a plugin-owned streaming converter on the decoder worker:
 - Discard/reset conversion delay on seek, stop, replacement, or error.
 - Apply bounded-segment clipping in the source timeline before conversion so
   frames from the following track are not fed into the resampler.
-- Keep main fooyin DSP, ReplayGain settings, and master volume out of this path.
-  First-release preview is decoded audio plus format conversion and its own
-  stream volume. Decoder-defined source gain remains part of decoding.
+- Keep main fooyin DSP and master volume out of this path. Preview ReplayGain
+  reuses the shared main configuration as specified in Ticket 09, processed on
+  the preview worker before format conversion and its own stream volume.
+  Decoder-defined source gain remains part of decoding.
 
 The helper `Fooyin::Audio::convert()` is not a sample-rate converter; avoid
 mistaking its channel mapping for a complete resampling/downmixing pipeline.

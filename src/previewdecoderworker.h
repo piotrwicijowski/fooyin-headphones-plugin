@@ -2,6 +2,7 @@
 #pragma once
 
 #include "previewpcmbuffer.h"
+#include "previewreplaygain.h"
 #include "previewsource.h"
 
 #include <atomic>
@@ -13,7 +14,8 @@ namespace Fooyin::Headphones {
 // The abort mutex protects publication/lifetime, never a read/open/seek call.
 struct PreviewSession
 {
-    PreviewSession(uint64_t generation_, Track track_, uint64_t position_, bool initialStart_ = false);
+    PreviewSession(uint64_t generation_, Track track_, uint64_t position_, bool initialStart_ = false,
+                   PreviewReplayGain replayGain_ = {});
     void cancel();
     void approve(const AudioFormat& outputFormat);
     std::optional<AudioFormat> waitForApproval();
@@ -24,6 +26,7 @@ struct PreviewSession
     const Track track;
     const uint64_t positionMs;
     const bool initialStart;
+    const PreviewReplayGain replayGain;
     std::atomic<bool> cancelled {false};
     std::mutex abortMutex;
     PreviewSource* abortSource {nullptr};

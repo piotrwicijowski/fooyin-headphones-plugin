@@ -34,6 +34,7 @@ add_library(HeadphonesPreviewEngine STATIC
     src/previewtypes.h
     src/previewoutput.h
     src/previewconverter.h src/previewconverter.cpp
+    src/previewreplaygain.h src/previewreplaygain.cpp
     src/headphonedevices.h src/headphonedevices.cpp
     src/headphonessettings.h src/headphonessettings.cpp
     src/qtaudiooutput.h src/qtaudiooutput.cpp

@@ -10,6 +10,9 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <limits>
 
 #if LIBSWRESAMPLE_VERSION_MAJOR < 4 || LIBAVUTIL_VERSION_MAJOR < 57
 #error "Headphones Preview requires FFmpeg 5+ (libswresample 4+, libavutil 57+)"
@@ -62,19 +65,22 @@ void PreviewConverter::reset()
     m_output      = {};
     m_passthrough = false;
     m_finished    = false;
+    m_linearGain  = 1.0;
 }
 
-bool PreviewConverter::configure(const AudioFormat& input, const AudioFormat& output, QString& error)
+bool PreviewConverter::configure(const AudioFormat& input, const AudioFormat& output, QString& error, double linearGain)
 {
     reset();
     if(!isPreviewFormat(input) || !isPreviewFormat(output)
-       || outputSampleFormat(output.sampleFormat()) == AV_SAMPLE_FMT_NONE) {
+       || outputSampleFormat(output.sampleFormat()) == AV_SAMPLE_FMT_NONE || !std::isfinite(linearGain)
+       || linearGain < 0.0 || linearGain > std::numeric_limits<float>::max()) {
         error = u"Unsupported preview conversion format or channel layout."_s;
         return false;
     }
     m_input       = input;
     m_output      = output;
-    m_passthrough = input == output;
+    m_linearGain  = linearGain;
+    m_passthrough = input == output && linearGain == 1.0;
     if(m_passthrough) {
         return true;
     }
@@ -118,10 +124,21 @@ std::optional<std::vector<std::byte>> PreviewConverter::convert(const AudioBuffe
     auto floatFormat = m_input;
     floatFormat.setSampleFormat(SampleFormat::F32);
     // Fooyin's S24In32 is a left-aligned S32 lane, matching its public helper.
-    const auto normalised = Audio::convert(input, floatFormat);
+    auto normalised = Audio::convert(input, floatFormat);
     if(!normalised.isValid()) {
         error = u"Unable to normalise preview PCM to float."_s;
         return {};
+    }
+    if(m_linearGain != 1.0) {
+        // Gain precedes channel mixing/resampling and final integer quantisation.
+        // Source peaks cannot guarantee absence of later resampling overshoot.
+        constexpr double Limit = std::numeric_limits<float>::max();
+        for(size_t offset = 0; offset < normalised.constData().size(); offset += sizeof(float)) {
+            float value;
+            std::memcpy(&value, normalised.constData().data() + offset, sizeof(value));
+            value = std::isfinite(value) ? static_cast<float>(std::clamp(value * m_linearGain, -Limit, Limit)) : 0.0F;
+            std::memcpy(normalised.data() + offset, &value, sizeof(value));
+        }
     }
     return process(reinterpret_cast<const uint8_t*>(normalised.data()), normalised.frameCount(), error);
 }

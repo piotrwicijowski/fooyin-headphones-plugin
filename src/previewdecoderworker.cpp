@@ -41,11 +41,13 @@ struct SourceLifetime
 };
 } // namespace
 
-PreviewSession::PreviewSession(uint64_t generation_, Track track_, uint64_t position_, bool initialStart_)
+PreviewSession::PreviewSession(uint64_t generation_, Track track_, uint64_t position_, bool initialStart_,
+                               PreviewReplayGain replayGain_)
     : generation {generation_}
     , track {std::move(track_)}
     , positionMs {position_}
     , initialStart {initialStart_}
+    , replayGain {replayGain_}
 {
 }
 
@@ -243,7 +245,7 @@ void PreviewDecoderWorker::decode(const std::shared_ptr<PreviewSession>& session
         return;
     }
     PreviewConverter converter;
-    if(!converter.configure(format, *outputFormat, error)) {
+    if(!converter.configure(format, *outputFormat, error, session->replayGain.linearGain(session->track))) {
         m_failed(session->generation, error);
         return;
     }

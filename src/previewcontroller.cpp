@@ -3,6 +3,8 @@
 
 #include "previewdecoderworker.h"
 
+#include <utils/settings/settingsmanager.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -89,6 +91,8 @@ void PreviewController::invalidate()
 
 void PreviewController::begin(const Track& track, uint64_t positionMs, bool paused, bool initialStart)
 {
+    const auto replayGain = initialStart ? PreviewReplayGain::capture(m_replayGainSettings)
+                                        : m_session ? m_session->replayGain : PreviewReplayGain {};
     invalidate();
     m_snapshot.track          = track;
     m_snapshot.durationMs     = track.duration();
@@ -107,7 +111,7 @@ void PreviewController::begin(const Track& track, uint64_t positionMs, bool paus
         return;
     }
     m_snapshot.state = PreviewState::Loading;
-    m_session        = std::make_shared<PreviewSession>(m_snapshot.generation, track, positionMs, initialStart);
+    m_session        = std::make_shared<PreviewSession>(m_snapshot.generation, track, positionMs, initialStart, replayGain);
     m_worker->submit(m_session);
     m_pump.start();
     m_positionTimer.start();
@@ -133,6 +137,11 @@ void PreviewController::setPreviewStartOffsetSeconds(int seconds)
     m_startOffsetMs = seconds >= 0 && static_cast<uint64_t>(seconds) <= maxSeconds
                         ? static_cast<uint64_t>(seconds) * 1000
                         : 0;
+}
+
+void PreviewController::setReplayGainSettingsManager(SettingsManager* settings)
+{
+    m_replayGainSettings = settings;
 }
 
 void PreviewController::opened(const std::shared_ptr<PreviewSession>& session, const PreviewSourceInfo& info)

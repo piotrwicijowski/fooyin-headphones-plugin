@@ -18,7 +18,7 @@ public:
     PreviewConverter(const PreviewConverter&)            = delete;
     PreviewConverter& operator=(const PreviewConverter&) = delete;
 
-    bool configure(const AudioFormat& input, const AudioFormat& output, QString& error);
+    bool configure(const AudioFormat& input, const AudioFormat& output, QString& error, double linearGain = 1.0);
     std::optional<std::vector<std::byte>> convert(const AudioBuffer& input, QString& error);
     std::optional<std::vector<std::byte>> finish(QString& error);
     void reset();
@@ -28,6 +28,7 @@ private:
     AudioFormat m_input;
     AudioFormat m_output;
     SwrContext* m_context {nullptr};
+    double m_linearGain {1.0};
     bool m_passthrough {false};
     bool m_finished {false};
 };

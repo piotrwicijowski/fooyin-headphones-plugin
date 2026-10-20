@@ -90,9 +90,24 @@ Alternatively, run `make test FOOYIN_BUILD_DIR=/path/to/fooyin/build`.
 | `headphones.preview-engine` | Transport, cancellation, stale results, replacement, exact segment/seek boundaries, queue bounds, starvation, errors, and output positioning. |
 | `headphones.preview-source` | Public AudioLoader integration, CUE/chapter samples, decoder options, concurrent-decoding rejection, ownership, and worker-thread teardown. |
 | `headphones.preview-converter` | Sample containers and scaling, channel gains, streaming resampling, continuity, tail flushing, reset, and allocation bounds. |
+| `headphones.preview-replaygain` | Shared configuration, all processing/selection modes, gain/preamp/peak PCM, invalid metadata, session snapshots, muted playback, replacement, and resampled tails. Optional real native-Opus header-gain check. |
 | `headphones.preview-output` | Format negotiation, opaque device IDs, hotplug, sink epochs, pause/drain clocks, backend recovery, and persisted volume/device settings. |
 | `headphones.gui` | Actions and selection targets, volume-step bounds and shared mute restoration, settings/dialog-provider lifetime, hotplug, scrubbing, and widget recreation. |
 | `headphones.script-variables` | Real script-parser evaluation, metadata fallbacks, state, track/segment indicators, refresh notifications, and concurrent callbacks. |
+
+To include the real native-Opus check, supply a matching fooyin Opus input plugin
+and a local Opus fixture with nonzero audio in its first 50 ms:
+
+```sh
+HEADPHONES_TEST_OPUS_PLUGIN=/path/to/fooyin/plugins/fyplugin_opus.so \
+HEADPHONES_TEST_OPUS_FILE=/path/to/audio.opus \
+ctest --preset test-agent -R preview-replaygain
+```
+
+The check generates temporary zero/+6 dB header-gain variants, repairs their Ogg
+CRCs, and verifies decoder/header gain with every processing and gain-selection
+mode. It uses the public `InputPlugin` interface and is skipped if these variables
+are absent. The plugin, fixture, and dependencies are test-only inputs.
 
 ## Same-process integration validation
 
@@ -204,7 +219,21 @@ and logging overrides, using `--skip-single`.
   supported preferred and 44.1/48 kHz candidates, with mono fallback.
 - Input is normalised with fooyin's public float conversion helper. libswresample
   handles streaming rate/sample-format conversion, with explicit mono duplication
-  and stereo averaging. Matching native formats can pass through unchanged.
+  and stereo averaging. ReplayGain is applied to float PCM before mixing,
+  resampling, and final integer quantisation. Matching native formats pass through
+  unchanged when the computed gain is unity.
+- `PreviewReplayGain` reads only the public main ReplayGain settings, capturing
+  processing flags, playback-order-resolved gain selection, and both preamps at
+  fresh/restarted preview creation. Each `PreviewSession` retains that immutable
+  policy across seek generations. Configuration changes do not modify active
+  sessions, and no ReplayGain configuration is registered or persisted by the
+  plugin.
+- Gain and peak fallback follow fooyin's main processor using raw `Track::rg*`
+  metadata, not `effectiveRG*` getters. Source gain belongs to the selected
+  decoder. In particular, fooyin's native Opus decoder uses `OP_ABSOLUTE_GAIN` to
+  suppress header gain even with ReplayGain disabled; preview preserves that
+  decoder behaviour rather than adding header gain independently. Peak-based
+  prevention constrains source gain, not later resampling overshoot.
 - Each generation owns a frame-aligned 500 ms ring buffer, capped at 8 MiB, with
   a 40 ms startup reserve and cancellation-aware producer backpressure. Conversion
   staging is also capped at 8 MiB. Rates above 768 kHz are rejected.

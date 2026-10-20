@@ -17,6 +17,8 @@ track or changing the queue, volume, or output settings.
   your own keyboard bindings.
 - **Configurable start offset:** skip a fixed number of seconds at the start of
   each preview, default 0s.
+- **ReplayGain:** previews reuse fooyin's main ReplayGain configuration, including
+  gain selection, preamps, and peak-based clipping prevention.
 - **Script variables:** display preview metadata, playback state, and a headphone
   indicator in playlist columns.
 
@@ -110,6 +112,12 @@ At the end of a track, preview stops without advancing the selection or playlist
 Stop retains the track for an explicit restart. Device, volume, and start-offset
 settings are saved, but playback never starts automatically.
 
+### ReplayGain
+
+There are no headphone-specific ReplayGain settings. The plugin reuses the
+processing mode, Track/Album/playback-order selection, and both preamps
+configured through fooyin's **Playback → ReplayGain** settings.
+
 ## Layout widgets
 
 Add any combination of these widgets under **Headphones plugin**:
@@ -194,11 +202,11 @@ $if(%headphones_isstopped%,Stopped,$if(%headphones_ispaused%,Paused,Playing))[: 
 Use separately addressable main and headphone devices. Using the same device
 results in both main track and headphones preview to be mixed.
 
-The preview pipeline uses Qt Multimedia output and its own volume. This means
-that the fooyin multimedia processing chain, such as DSP, ReplayGain, and main
-volume are not applied. Remote streams, virtual/CD sources, archive-backed
-tracks, multichannel audio, and decoders that prohibit concurrent decoding are
-unsupported.
+The preview pipeline uses Qt Multimedia output and its own volume. It applies
+ReplayGain using fooyin's shared configuration, independently of the main audio
+pipeline; main DSP and main volume are not applied. Remote streams, virtual/CD
+sources, archive-backed tracks, multichannel audio, and decoders that prohibit
+concurrent decoding are unsupported.
 
 ### Device disconnects and unexpected routing
 

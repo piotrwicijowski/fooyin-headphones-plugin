@@ -6,9 +6,14 @@
 #include "previewtypes.h"
 
 #include <QObject>
+#include <QPointer>
 #include <QTimer>
 
 #include <vector>
+
+namespace Fooyin {
+class SettingsManager;
+}
 
 namespace Fooyin::Headphones {
 class PreviewDecoderWorker;
@@ -31,6 +36,7 @@ public:
     bool seek(int64_t relativeMs);
     void setVolume(double volume);
     void setPreviewStartOffsetSeconds(int seconds);
+    void setReplayGainSettingsManager(SettingsManager* settings);
     void mute();
     void unmute();
     void toggleMute();
@@ -57,6 +63,7 @@ private:
     std::unique_ptr<PreviewOutput> m_output;
     std::unique_ptr<PreviewDecoderWorker> m_worker;
     std::shared_ptr<PreviewSession> m_session;
+    QPointer<SettingsManager> m_replayGainSettings;
     QTimer m_pump;
     QTimer m_positionTimer;
     std::vector<std::byte> m_pending;

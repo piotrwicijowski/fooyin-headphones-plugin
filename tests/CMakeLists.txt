@@ -22,6 +22,11 @@ target_link_libraries(previewconvertertest PRIVATE HeadphonesPreviewEngine Qt6::
 add_test(NAME headphones.preview-converter COMMAND previewconvertertest)
 set_tests_properties(headphones.preview-converter PROPERTIES TIMEOUT 30)
 
+add_executable(previewreplaygaintest previewreplaygaintest.cpp fakes/previewfakes.h)
+target_link_libraries(previewreplaygaintest PRIVATE HeadphonesPreviewEngine Qt6::Test)
+add_test(NAME headphones.preview-replaygain COMMAND previewreplaygaintest)
+set_tests_properties(headphones.preview-replaygain PROPERTIES TIMEOUT 30)
+
 add_executable(previewoutputtest previewoutputtest.cpp fakes/audiosinkfakes.h fakes/previewfakes.h)
 target_link_libraries(previewoutputtest PRIVATE HeadphonesPreviewEngine Qt6::Test)
 add_test(NAME headphones.preview-output COMMAND previewoutputtest)
