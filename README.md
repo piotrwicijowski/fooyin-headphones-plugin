@@ -16,7 +16,7 @@ track or changing the queue, volume, or output settings.
 - **Track actions and shortcuts:** preview from a track's context menu or assign
   your own keyboard bindings.
 - **Configurable start offset:** skip a fixed number of seconds at the start of
-  each preview, with a default of 0 seconds.
+  each preview, default 0s.
 - **Script variables:** display preview metadata, playback state, and a headphone
   indicator in playlist columns.
 
@@ -110,25 +110,6 @@ At the end of a track, preview stops without advancing the selection or playlist
 Stop retains the track for an explicit restart. Device, volume, and start-offset
 settings are saved, but playback never starts automatically.
 
-### Preview start offset
-
-In **Headphones Preview → Configure**, set **Preview start offset (seconds)**
-and choose **Apply** or **OK**. The default is **0** (start at the beginning);
-the supported range is 0–2,147,483,647 whole seconds. Cancel discards unapplied
-edits. Applying an offset leaves the current preview playing or paused where it is.
-
-New previews from the selection, context menu, or shortcut use the latest applied
-offset. So do explicit restarts: **Play** on an already playing track, and
-**Play** or **Play/Pause** after Stop or the end of a track. Resuming a paused
-preview keeps its position, and manual seeking goes directly to the requested time.
-
-The offset is relative to the logical track start, including CUE/chapter segments.
-If it is at or beyond a known track duration, preview starts at the beginning
-instead. Unseekable sources also start at the beginning; segments whose source
-start requires seeking remain unsupported on those sources. For an unknown
-duration, preview attempts the offset and stops normally if it reaches EOF before
-any audio. Invalid saved offsets use the default of 0 seconds.
-
 ## Layout widgets
 
 Add any combination of these widgets under **Headphones plugin**:
@@ -146,10 +127,7 @@ All layout widget instances control the same preview.
 ## Keyboard shortcuts
 
 Assign bindings in fooyin's shortcut settings under **Headphones Preview**.
-Commands are grouped into **Headphone playback**, **Headphone seek**,
-**Headphone tracks**, and **Headphone volume**;
-**Configure** is directly under Headphones Preview. Fooyin sorts commands
-alphabetically within each group. There are no default bindings.
+There are no default bindings.
 
 | Group | Command | Action ID |
 | --- | --- | --- |
@@ -172,20 +150,11 @@ alphabetically within each group. There are no default bindings.
 
 Seek commands use fooyin's small and large increments from **Playback → General**.
 
-Volume commands adjust the shared headphone volume by **5 percentage points**,
-clamped to 0–100%. Mute remembers the last nonzero level; Unmute restores it only
-while muted. These commands and Configure work without preview widgets or a
-configured output, and do not start playback.
+Volume commands adjust the headphone volume by **5 percentage points**, clamped
+to 0–100%.
 
 **Show previewed track** switches to the preview track's playlist, selects matching
 tracks, and reveals the retained entry, including while paused and after Stop.
-It prefers the original entry, even after reordering. If that entry was removed,
-it looks for the same track/segment in the visible playlist, then other loaded
-playlists. If no match exists, it does nothing. Selection follows fooyin's matching
-rules, so additional duplicates or segments from the same file may be selected.
-Keyboard focus is not changed, and existing playlist filters are respected.
-Navigation preserves preview and main playback, the active playback playlist,
-and the queue.
 
 ## Script variables
 

@@ -114,12 +114,7 @@ handles deferred playlist-view loading, re-resolving entry identity on each try.
 Selection is confirmed through public `TrackSelectionController` metadata.
 Fooyin's matching rules may select additional duplicate/segment rows, and its
 public API does not guarantee playlist keyboard focus. Existing filters are
-respected. The plugin uses only public headers and requires no host modifications.
-
-Shortcut subgroups use plugin-specific names (Headphone playback, Headphone seek,
-Headphone tracks, Headphone volume) because the host keys categories by label
-across all parents. This keeps them separate from main-player groups without
-changing the host shortcut model.
+respected.
 
 The driver is built with `BUILD_TESTING=ON` under
 `build-test-agent/tests/inprocess/`. It is not installed or run by ordinary CTest.
