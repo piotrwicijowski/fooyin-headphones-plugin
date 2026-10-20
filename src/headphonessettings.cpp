@@ -20,8 +20,11 @@ HeadphonesSettings::HeadphonesSettings(SettingsManager* settings, QObject* paren
         m_settings->createSetting(u"Headphones/DeviceId"_s, QString {});
         m_settings->createSetting(u"Headphones/DeviceDescription"_s, QString {});
         m_settings->createSetting(u"Headphones/Volume"_s, 0.25);
+        m_settings->createSetting(u"Headphones/PreviewStartOffsetSeconds"_s, 0);
         m_settings->subscribe(u"Headphones/DeviceId", this, [this]() { Q_EMIT deviceChanged(); });
         m_settings->subscribe(u"Headphones/Volume", this, [this]() { Q_EMIT volumeChanged(); });
+        m_settings->subscribe(u"Headphones/PreviewStartOffsetSeconds", this,
+                              [this]() { Q_EMIT previewStartOffsetChanged(); });
     }
 }
 
@@ -42,6 +45,17 @@ double HeadphonesSettings::volume() const
     return valid && std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 0.25;
 }
 
+int HeadphonesSettings::previewStartOffsetSeconds() const
+{
+    // Parse as an integer string: QVariant's numeric conversion can round floats
+    // or wrap oversized unsigned values before range validation.
+    bool valid {false};
+    const auto value = m_settings
+                         ? m_settings->value(u"Headphones/PreviewStartOffsetSeconds").toString().toLongLong(&valid)
+                         : 0;
+    return valid && value >= 0 && value <= MaxPreviewStartOffsetSeconds ? static_cast<int>(value) : 0;
+}
+
 void HeadphonesSettings::setDevice(const QByteArray& id, const QString& description)
 {
     if(m_settings) {
@@ -54,6 +68,13 @@ void HeadphonesSettings::setVolume(double uiVolume)
 {
     if(m_settings && std::isfinite(uiVolume)) {
         m_settings->set(u"Headphones/Volume", std::clamp(uiVolume, 0.0, 1.0));
+    }
+}
+
+void HeadphonesSettings::setPreviewStartOffsetSeconds(int seconds)
+{
+    if(m_settings) {
+        m_settings->set(u"Headphones/PreviewStartOffsetSeconds", seconds >= 0 ? seconds : 0);
     }
 }
 

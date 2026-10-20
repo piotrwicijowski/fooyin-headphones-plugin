@@ -30,6 +30,7 @@ public:
     void stop();
     bool seek(int64_t relativeMs);
     void setVolume(double volume);
+    void setPreviewStartOffsetSeconds(int seconds);
     void mute();
     void unmute();
     void toggleMute();
@@ -41,7 +42,8 @@ Q_SIGNALS:
     void snapshotChanged(const Fooyin::Headphones::PreviewSnapshot& snapshot);
 
 private:
-    void begin(const Track& track, uint64_t positionMs, bool paused, bool keepSeekable);
+    void start(const Track& track);
+    void begin(const Track& track, uint64_t positionMs, bool paused, bool initialStart);
     void invalidate();
     void fail(const QString& error);
     void opened(const std::shared_ptr<PreviewSession>& session, const PreviewSourceInfo& info);
@@ -60,6 +62,8 @@ private:
     std::vector<std::byte> m_pending;
     size_t m_pendingOffset {0};
     size_t m_prebufferBytes {0};
+    uint64_t m_startOffsetMs {0};
+    uint64_t m_initialPositionMs {0};
     bool m_outputConfigured {false};
     bool m_outputStarted {false};
     bool m_shutdown {false};

@@ -83,7 +83,7 @@ its own scope, implementation steps, acceptance criteria, and completion status.
 | Ticket | Scope |
 | --- | --- |
 | [07-keyboard-actions.md](07-keyboard-actions.md) | Implemented: volume up/down, mute/unmute/toggle mute, open configuration, and focus the previewed track |
-| [08-preview-start-offset.md](08-preview-start-offset.md) | Fixed configurable start offset, default 0 seconds |
+| [08-preview-start-offset.md](08-preview-start-offset.md) | Implemented: fixed configurable start offset, default 0 seconds |
 | [09-preview-replaygain.md](09-preview-replaygain.md) | Independent preview ReplayGain |
 | [10-multichannel-to-stereo.md](10-multichannel-to-stereo.md) | Channel-layout-aware multichannel input downmixing |
 | [11-output-channel-pair-selection.md](11-output-channel-pair-selection.md) | Route preview to an explicit pair on a multichannel output |

@@ -87,14 +87,14 @@ void PreviewController::invalidate()
     m_outputStarted    = false;
 }
 
-void PreviewController::begin(const Track& track, uint64_t positionMs, bool paused, bool keepSeekable)
+void PreviewController::begin(const Track& track, uint64_t positionMs, bool paused, bool initialStart)
 {
     invalidate();
     m_snapshot.track          = track;
     m_snapshot.durationMs     = track.duration();
     m_snapshot.pauseRequested = paused;
     m_snapshot.error.clear();
-    if(!keepSeekable) {
+    if(initialStart) {
         m_snapshot.seekable   = false;
         m_snapshot.positionMs = 0;
     }
@@ -107,7 +107,7 @@ void PreviewController::begin(const Track& track, uint64_t positionMs, bool paus
         return;
     }
     m_snapshot.state = PreviewState::Loading;
-    m_session        = std::make_shared<PreviewSession>(m_snapshot.generation, track, positionMs);
+    m_session        = std::make_shared<PreviewSession>(m_snapshot.generation, track, positionMs, initialStart);
     m_worker->submit(m_session);
     m_pump.start();
     m_positionTimer.start();
@@ -117,8 +117,22 @@ void PreviewController::begin(const Track& track, uint64_t positionMs, bool paus
 void PreviewController::previewTrack(const Track& track)
 {
     if(!m_shutdown) {
-        begin(track, 0, false, false);
+        start(track);
     }
+}
+
+void PreviewController::start(const Track& track)
+{
+    begin(track, m_startOffsetMs, false, true);
+}
+
+void PreviewController::setPreviewStartOffsetSeconds(int seconds)
+{
+    // Only update future-start policy; an active session keeps its own target.
+    const auto maxSeconds = static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) / 1000;
+    m_startOffsetMs = seconds >= 0 && static_cast<uint64_t>(seconds) <= maxSeconds
+                        ? static_cast<uint64_t>(seconds) * 1000
+                        : 0;
 }
 
 void PreviewController::opened(const std::shared_ptr<PreviewSession>& session, const PreviewSourceInfo& info)
@@ -137,7 +151,8 @@ void PreviewController::opened(const std::shared_ptr<PreviewSession>& session, c
     m_prebufferBytes
         = static_cast<size_t>(std::max<uint64_t>(outputFormat->bytesPerFrame(), outputFormat->bytesForDuration(40)));
     m_snapshot.seekable   = info.seekable;
-    m_snapshot.positionMs = session->positionMs;
+    m_initialPositionMs   = info.positionMs;
+    m_snapshot.positionMs  = info.positionMs;
     m_snapshot.state      = m_snapshot.pauseRequested ? PreviewState::Paused : PreviewState::Buffering;
     session->approve(*outputFormat);
     publish();
@@ -150,7 +165,7 @@ void PreviewController::playPause()
     }
     if(!active()) {
         if(m_snapshot.track.isValid() && m_output && m_output->isAvailable()) {
-            begin(m_snapshot.track, 0, false, false);
+            start(m_snapshot.track);
         }
         return;
     }
@@ -196,7 +211,7 @@ bool PreviewController::seek(int64_t relativeMs)
     if(m_snapshot.durationMs != 0) {
         target = std::min(target, m_snapshot.durationMs);
     }
-    begin(m_snapshot.track, target, m_snapshot.pauseRequested, true);
+    begin(m_snapshot.track, target, m_snapshot.pauseRequested, false);
     return true;
 }
 
@@ -365,7 +380,7 @@ void PreviewController::updatePosition()
     }
     const auto processed = m_output->processedMs();
     auto position
-        = m_session->positionMs + std::min(processed, std::numeric_limits<uint64_t>::max() - m_session->positionMs);
+        = m_initialPositionMs + std::min(processed, std::numeric_limits<uint64_t>::max() - m_initialPositionMs);
     if(m_snapshot.track.isBoundedSegment()) {
         position = std::min(position, m_snapshot.durationMs);
     }

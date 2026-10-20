@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -23,6 +24,7 @@ HeadphonesSettingsDialog::HeadphonesSettingsDialog(HeadphonesSettings& settings,
     , m_settings {&settings}
     , m_devices {&devices}
     , m_combo {new QComboBox(this)}
+    , m_startOffset {new QSpinBox(this)}
     , m_pendingId {settings.deviceId()}
     , m_pendingDescription {settings.deviceDescription()}
 {
@@ -41,6 +43,16 @@ HeadphonesSettingsDialog::HeadphonesSettingsDialog(HeadphonesSettings& settings,
                             this);
     note->setWordWrap(true);
     layout->addWidget(note);
+    auto* offsetLabel = new QLabel(tr("Preview start offset (seconds):"), this);
+    m_startOffset->setObjectName(u"Headphones.PreviewStartOffsetSeconds"_s);
+    m_startOffset->setAccessibleName(tr("Preview start offset (seconds)"));
+    m_startOffset->setRange(0, HeadphonesSettings::MaxPreviewStartOffsetSeconds);
+    m_startOffset->setValue(settings.previewStartOffsetSeconds());
+    m_startOffset->setToolTip(tr("Used for new previews and restarts. Paused previews resume at their current position. "
+                                "Short or unseekable tracks start at the beginning."));
+    offsetLabel->setBuddy(m_startOffset);
+    layout->addWidget(offsetLabel);
+    layout->addWidget(m_startOffset);
     auto* buttons
         = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Apply | QDialogButtonBox::Cancel, this);
     buttons->setObjectName(u"Headphones.SettingsButtons"_s);
@@ -87,11 +99,34 @@ void HeadphonesSettingsDialog::refreshDevices()
     m_combo->setCurrentIndex(m_combo->findData(m_pendingId));
 }
 
+void HeadphonesSettingsDialog::resetPending()
+{
+    if(m_settings) {
+        m_pendingId          = m_settings->deviceId();
+        m_pendingDescription = m_settings->deviceDescription();
+        m_startOffset->setValue(m_settings->previewStartOffsetSeconds());
+        refreshDevices();
+    }
+}
+
+void HeadphonesSettingsDialog::done(int result)
+{
+    resetPending();
+    QDialog::done(result);
+}
+
+void HeadphonesSettingsDialog::showEvent(QShowEvent* event)
+{
+    resetPending();
+    QDialog::showEvent(event);
+}
+
 void HeadphonesSettingsDialog::apply()
 {
     if(m_settings) {
         const auto description = m_combo->currentData(Qt::UserRole + 1).toString();
         m_settings->setDevice(m_pendingId, description);
+        m_settings->setPreviewStartOffsetSeconds(m_startOffset->value());
     }
 }
 

@@ -234,6 +234,199 @@ private Q_SLOTS:
         QCOMPARE(h.controller->snapshot().positionMs, uint64_t {0});
     }
 
+    void configuredStartSamples_data()
+    {
+        QTest::addColumn<int>("rate");
+        QTest::addColumn<quint64>("sourceOffset");
+        QTest::addColumn<quint64>("duration");
+        QTest::addColumn<bool>("bounded");
+        QTest::addColumn<bool>("seekable");
+        QTest::addColumn<int>("seconds");
+        QTest::addColumn<quint64>("effectiveMs");
+        QTest::newRow("whole-file") << 1000 << quint64 {0} << quint64 {5000} << false << true << 1 << quint64 {1000};
+        QTest::newRow("cue") << 1000 << quint64 {127} << quint64 {1700} << true << true << 1 << quint64 {1000};
+        QTest::newRow("chapter-exact-preroll")
+            << 44100 << quint64 {27} << quint64 {1701} << true << true << 1 << quint64 {1000};
+        QTest::newRow("short-whole-file") << 1000 << quint64 {0} << quint64 {500} << false << true << 1 << quint64 {0};
+        QTest::newRow("at-duration") << 1000 << quint64 {0} << quint64 {1000} << false << true << 1 << quint64 {0};
+        QTest::newRow("short-segment") << 1000 << quint64 {127} << quint64 {500} << true << true << 1 << quint64 {0};
+        QTest::newRow("unknown-duration") << 1000 << quint64 {0} << quint64 {0} << false << true << 1 << quint64 {1000};
+        QTest::newRow("unseekable") << 1000 << quint64 {0} << quint64 {0} << false << false << 3600 << quint64 {0};
+        QTest::newRow("unseekable-segment-at-source-start")
+            << 1000 << quint64 {0} << quint64 {1700} << true << false << 1 << quint64 {0};
+        QTest::newRow("negative-policy-defaults-to-zero")
+            << 1000 << quint64 {0} << quint64 {5000} << false << true << -1 << quint64 {0};
+    }
+
+    void configuredStartSamples()
+    {
+        QFETCH(int, rate);
+        QFETCH(quint64, sourceOffset);
+        QFETCH(quint64, duration);
+        QFETCH(bool, bounded);
+        QFETCH(bool, seekable);
+        QFETCH(int, seconds);
+        QFETCH(quint64, effectiveMs);
+        PreviewHarness h;
+        auto plan = h.add(u"offset.wav"_s);
+        plan->format.setSampleRate(rate);
+        plan->seekable     = seekable;
+        plan->seekRoundsUp = true;
+        plan->totalFrames  = rate * 5;
+        h.create();
+        h.controller->setPreviewStartOffsetSeconds(seconds);
+        Track track {u"offset.wav"_s};
+        track.setOffset(sourceOffset);
+        track.setDuration(duration);
+        if(bounded) {
+            track.setCuePath(u"fixture.cue"_s);
+        }
+        h.controller->previewTrack(track);
+        const uint64_t first = (sourceOffset + effectiveMs) * rate / 1000;
+        const uint64_t end   = bounded ? (sourceOffset + duration) * rate / 1000 : plan->totalFrames;
+        QTRY_COMPARE(h.output->stream.size(), (end - first) * sizeof(int16_t));
+        for(size_t i = 0; i < end - first; ++i) {
+            QCOMPARE(sampleAt(h.output->stream, i), static_cast<int16_t>((first + i) % 30000));
+        }
+        QCOMPARE(h.controller->snapshot().positionMs, effectiveMs);
+        QCOMPARE(h.controller->snapshot().seekable, seekable);
+        const auto period = 1000 / std::gcd(rate, 1000);
+        QCOMPARE(plan->lastSeek.load(), (sourceOffset + effectiveMs) - (sourceOffset + effectiveMs) % period);
+        h.output->processed = 23;
+        QTRY_COMPARE(h.controller->snapshot().positionMs, effectiveMs + 23);
+        h.output->canDrain = true;
+        QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Stopped);
+        QCOMPARE(h.controller->snapshot().positionMs, uint64_t {0});
+        QCOMPARE(h.controller->snapshot().track.filepath(), track.filepath());
+    }
+
+    void offsetChangesOnlyAffectFreshStarts()
+    {
+        PreviewHarness h;
+        auto plan = h.add(u"offset.wav"_s);
+        h.create();
+        h.controller->setPreviewStartOffsetSeconds(1);
+        const Track track {u"offset.wav"_s};
+        h.controller->previewTrack(track);
+        QTRY_VERIFY(!h.output->stream.empty());
+        QCOMPARE(sampleAt(h.output->stream, 0), int16_t {1000});
+        h.output->processed = 123;
+        QTRY_COMPARE(h.controller->snapshot().positionMs, uint64_t {1123});
+        const auto generation = h.controller->snapshot().generation;
+        h.controller->setPreviewStartOffsetSeconds(2);
+        QCOMPARE(h.controller->snapshot().generation, generation);
+        QCOMPARE(h.controller->snapshot().positionMs, uint64_t {1123});
+        QCOMPARE(plan->opens.load(), 1);
+        QCOMPARE(sampleAt(h.output->stream, 0), int16_t {1000});
+        h.controller->playPause();
+        h.controller->setPreviewStartOffsetSeconds(3);
+        h.controller->playPause();
+        QCOMPARE(h.controller->snapshot().positionMs, uint64_t {1123});
+        QCOMPARE(h.controller->snapshot().generation, generation);
+        h.controller->playPause();
+        QVERIFY(h.controller->seek(40));
+        QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Paused);
+        QCOMPARE(h.controller->snapshot().positionMs, uint64_t {40});
+        h.controller->playPause();
+        QTRY_VERIFY(!h.output->stream.empty());
+        QCOMPARE(sampleAt(h.output->stream, 0), int16_t {40});
+        h.controller->previewTrack(track);
+        QTRY_VERIFY(!h.output->stream.empty());
+        QCOMPARE(sampleAt(h.output->stream, 0), int16_t {3000});
+        h.controller->stop();
+        QCOMPARE(h.controller->snapshot().positionMs, uint64_t {0});
+        h.controller->setPreviewStartOffsetSeconds(4);
+        h.controller->playPause();
+        QTRY_VERIFY(!h.output->stream.empty());
+        QCOMPARE(sampleAt(h.output->stream, 0), int16_t {4000});
+    }
+
+    void configuredOffsetPastUnknownEof_data()
+    {
+        QTest::addColumn<int>("seconds");
+        QTest::newRow("past-eof") << 2;
+        QTest::newRow("maximum-seconds") << std::numeric_limits<int>::max();
+    }
+
+    void configuredOffsetPastUnknownEof()
+    {
+        QFETCH(int, seconds);
+        PreviewHarness h;
+        auto plan         = h.add(u"unknown.wav"_s);
+        plan->totalFrames = 100;
+        h.create();
+        h.controller->setPreviewStartOffsetSeconds(seconds);
+        h.controller->previewTrack(Track {u"unknown.wav"_s});
+        QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Stopped);
+        QCOMPARE(plan->lastSeek.load(), static_cast<uint64_t>(seconds) * 1000);
+        QCOMPARE(h.controller->snapshot().positionMs, uint64_t {0});
+        QVERIFY(h.controller->snapshot().error.isEmpty());
+        QVERIFY(h.output->stream.empty());
+        QCOMPARE(h.output->starts, 0);
+        h.controller->setPreviewStartOffsetSeconds(0);
+        h.controller->playPause();
+        QTRY_VERIFY(!h.output->stream.empty());
+        QCOMPARE(sampleAt(h.output->stream, 0), int16_t {0});
+    }
+
+    void configuredOffsetErrors_data()
+    {
+        QTest::addColumn<quint64>("sourceOffset");
+        QTest::addColumn<quint64>("duration");
+        QTest::addColumn<bool>("seekable");
+        QTest::newRow("unseekable-segment") << quint64 {27} << quint64 {2000} << false;
+        QTest::newRow("offset-addition-overflow")
+            << quint64(std::numeric_limits<int64_t>::max() - 500) << quint64 {0} << true;
+        QTest::newRow("segment-end-overflow")
+            << quint64(std::numeric_limits<int64_t>::max() - 1500) << quint64 {2000} << true;
+    }
+
+    void configuredOffsetErrors()
+    {
+        QFETCH(quint64, sourceOffset);
+        QFETCH(quint64, duration);
+        QFETCH(bool, seekable);
+        PreviewHarness h;
+        auto plan      = h.add(u"offset-error.wav"_s);
+        plan->seekable = seekable;
+        h.create();
+        h.controller->setPreviewStartOffsetSeconds(1);
+        Track track {u"offset-error.wav"_s};
+        track.setOffset(sourceOffset);
+        track.setDuration(duration);
+        track.setCuePath(u"fixture.cue"_s);
+        h.controller->previewTrack(track);
+        QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Error);
+        QVERIFY(!h.controller->snapshot().error.isEmpty());
+        QVERIFY(h.output->stream.empty());
+        QCOMPARE(plan->lastSeek.load(), uint64_t {0});
+        QCOMPARE(plan->reads.load(), 0);
+    }
+
+    void configuredOffsetReplacementDuringOpen()
+    {
+        PreviewHarness h;
+        auto old      = h.add(u"old-offset.wav"_s);
+        old->openGate = std::make_shared<Gate>();
+        auto next  = h.add(u"new-offset.wav"_s);
+        next->base = 9000;
+        h.create();
+        h.controller->setPreviewStartOffsetSeconds(1);
+        h.controller->previewTrack(Track {u"old-offset.wav"_s});
+        QTRY_VERIFY(old->openGate->entered.load());
+        h.controller->setPreviewStartOffsetSeconds(2);
+        h.controller->previewTrack(Track {u"new-offset.wav"_s});
+        h.controller->playPause();
+        old->openGate->release();
+        QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Paused);
+        QCOMPARE(h.controller->snapshot().positionMs, uint64_t {2000});
+        QVERIFY(h.output->stream.empty());
+        h.controller->playPause();
+        QTRY_VERIFY(!h.output->stream.empty());
+        QCOMPARE(sampleAt(h.output->stream, 0), int16_t {11000});
+        QCOMPARE(old->reads.load(), 0);
+    }
+
     void pausedSeekFlushesAndClamps()
     {
         PreviewHarness h;

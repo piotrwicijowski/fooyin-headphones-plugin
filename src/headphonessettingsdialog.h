@@ -6,6 +6,7 @@
 #include <QPointer>
 
 class QComboBox;
+class QSpinBox;
 namespace Fooyin::Headphones {
 class HeadphonesSettings;
 class HeadphoneDeviceCatalogue;
@@ -18,11 +19,15 @@ public:
                              QWidget* parent = nullptr);
 
 private:
+    void done(int result) override;
+    void showEvent(QShowEvent* event) override;
+    void resetPending();
     void refreshDevices();
     void apply();
     QPointer<HeadphonesSettings> m_settings;
     QPointer<HeadphoneDeviceCatalogue> m_devices;
     QComboBox* m_combo;
+    QSpinBox* m_startOffset;
     QByteArray m_pendingId;
     QString m_pendingDescription;
 };

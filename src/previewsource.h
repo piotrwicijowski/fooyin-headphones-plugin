@@ -15,6 +15,8 @@ struct PreviewSourceInfo
 {
     AudioFormat format;
     bool seekable {false};
+    // Worker-resolved logical position, including any initial-start fallback.
+    uint64_t positionMs {0};
 };
 
 // Created, opened, read, sought, stopped and destroyed on the decoder worker.

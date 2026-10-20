@@ -41,10 +41,11 @@ struct SourceLifetime
 };
 } // namespace
 
-PreviewSession::PreviewSession(uint64_t generation_, Track track_, uint64_t position_)
+PreviewSession::PreviewSession(uint64_t generation_, Track track_, uint64_t position_, bool initialStart_)
     : generation {generation_}
     , track {std::move(track_)}
     , positionMs {position_}
+    , initialStart {initialStart_}
 {
 }
 
@@ -184,7 +185,7 @@ void PreviewDecoderWorker::decode(const std::shared_ptr<PreviewSession>& session
         m_failed(session->generation, error);
         return;
     }
-    const auto info = source.open(session->track, error);
+    auto info = source.open(session->track, error);
     if(session->cancelled.load()) {
         return; // Loader open cannot be aborted through the public API.
     }
@@ -205,11 +206,18 @@ void PreviewDecoderWorker::decode(const std::shared_ptr<PreviewSession>& session
         return;
     }
     const auto maxTime = static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
-    if(session->track.offset() > maxTime || session->positionMs > maxTime - session->track.offset()
+    auto positionMs = session->positionMs;
+    if(session->initialStart
+       && (!info->seekable || (session->track.duration() != 0 && positionMs >= session->track.duration()))) {
+        // A configured offset is optional. Never decode-and-discard a long
+        // unseekable prefix; a nonzero segment source offset still errors below.
+        positionMs = 0;
+    }
+    if(session->track.offset() > maxTime || positionMs > maxTime - session->track.offset()
        || (session->track.isBoundedSegment() && session->track.duration() > maxTime - session->track.offset())) {
         throw std::runtime_error {"Preview segment timeline is out of range"};
     }
-    const uint64_t absoluteMs = session->track.offset() + session->positionMs;
+    const uint64_t absoluteMs = session->track.offset() + positionMs;
     // A direct millisecond seek can round to a different sample than PCM frame
     // arithmetic (e.g. FFmpeg rounds 27 ms at 44.1 kHz up). Seek to a preceding
     // millisecond whose frame coordinate is integral, then discard exact frames.
@@ -228,6 +236,7 @@ void PreviewDecoderWorker::decode(const std::shared_ptr<PreviewSession>& session
     if(session->cancelled.load()) {
         return;
     }
+    info->positionMs = positionMs;
     m_opened(session, *info);
     const auto outputFormat = session->waitForApproval();
     if(!outputFormat) {
@@ -250,7 +259,7 @@ void PreviewDecoderWorker::decode(const std::shared_ptr<PreviewSession>& session
         const auto duration = session->track.duration();
         // Subtract frame coordinates, not rounded per-block millisecond durations.
         remaining = framesForMs(session->track.offset() + duration, format.sampleRate())
-                  - framesForMs(session->track.offset() + std::min(duration, session->positionMs), format.sampleRate());
+                  - framesForMs(session->track.offset() + std::min(duration, positionMs), format.sampleRate());
     }
     constexpr size_t ReadFrames = 4096;
     const size_t requestBytes   = ReadFrames * frameBytes;

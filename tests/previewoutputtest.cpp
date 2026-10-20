@@ -234,11 +234,13 @@ private Q_SLOTS:
             QSignalSpy changes {&settings, &HeadphonesSettings::deviceChanged};
             QVERIFY(settings.deviceId().isEmpty());
             QCOMPARE(settings.volume(), 0.25);
+            QCOMPARE(settings.previewStartOffsetSeconds(), 0);
             settings.setDevice(id, u"Missing saved device"_s);
             QCOMPARE(changes.size(), 1);
             settings.setDevice(id, u"Updated description"_s);
             QCOMPARE(changes.size(), 1); // Same ID never triggers output replacement.
             settings.setVolume(0.4);
+            settings.setPreviewStartOffsetSeconds(42);
             manager.storeAllSettings();
         }
         SettingsManager restored {path};
@@ -246,6 +248,7 @@ private Q_SLOTS:
         QCOMPARE(settings.deviceId(), id);
         QCOMPARE(settings.deviceDescription(), u"Updated description"_s);
         QCOMPARE(settings.volume(), 0.4);
+        QCOMPARE(settings.previewStartOffsetSeconds(), 42);
         restored.set(u"Headphones/DeviceId", u"malformed!"_s);
         QVERIFY(settings.deviceId().isEmpty());
         settings.setVolume(-5.0);
@@ -256,6 +259,40 @@ private Q_SLOTS:
         QCOMPARE(previewVolumeGain(1.0), 1.0);
         QVERIFY(previewVolumeGain(0.25) > 0.0 && previewVolumeGain(0.25) < 0.25);
         QVERIFY(previewVolumeGain(0.5) > previewVolumeGain(0.25));
+    }
+
+    void invalidPersistedStartOffsets_data()
+    {
+        QTest::addColumn<QVariant>("stored");
+        QTest::addColumn<int>("expected");
+        QTest::newRow("negative") << QVariant {-1} << 0;
+        QTest::newRow("text") << QVariant {u"invalid"_s} << 0;
+        QTest::newRow("fractional") << QVariant {1.5} << 0;
+        QTest::newRow("boolean") << QVariant {true} << 0;
+        QTest::newRow("overflow-ui") << QVariant {qint64(HeadphonesSettings::MaxPreviewStartOffsetSeconds) + 1} << 0;
+        QTest::newRow("overflow-signed") << QVariant {u"9223372036854775808"_s} << 0;
+        QTest::newRow("overflow-unsigned") << QVariant {std::numeric_limits<quint64>::max()} << 0;
+        QTest::newRow("overflow-text") << QVariant {u"18446744073709551616"_s} << 0;
+        QTest::newRow("integer-text") << QVariant {u"37"_s} << 37;
+        QTest::newRow("ui-maximum") << QVariant {HeadphonesSettings::MaxPreviewStartOffsetSeconds}
+                                  << HeadphonesSettings::MaxPreviewStartOffsetSeconds;
+    }
+
+    void invalidPersistedStartOffsets()
+    {
+        QFETCH(QVariant, stored);
+        QFETCH(int, expected);
+        QTemporaryDir directory;
+        SettingsManager manager {directory.filePath(u"settings.ini"_s)};
+        manager.fileSet(u"Headphones/PreviewStartOffsetSeconds", stored);
+        HeadphonesSettings settings {&manager};
+        QCOMPARE(settings.previewStartOffsetSeconds(), expected);
+        settings.setPreviewStartOffsetSeconds(-1);
+        QCOMPARE(settings.previewStartOffsetSeconds(), 0);
+        settings.setPreviewStartOffsetSeconds(HeadphonesSettings::MaxPreviewStartOffsetSeconds);
+        QCOMPARE(settings.previewStartOffsetSeconds(), HeadphonesSettings::MaxPreviewStartOffsetSeconds);
+        HeadphonesSettings unavailable {nullptr};
+        QCOMPARE(unavailable.previewStartOffsetSeconds(), 0);
     }
 };
 

@@ -57,6 +57,7 @@ void HeadphonesPlugin::initialise(const CorePluginContext& context)
     m_preferences     = std::make_unique<HeadphonesSettings>(context.settingsManager);
     m_controller      = std::make_unique<PreviewController>(makePreviewSourceFactory(context.audioLoader), nullptr);
     m_controller->setVolume(m_preferences->volume());
+    m_controller->setPreviewStartOffsetSeconds(m_preferences->previewStartOffsetSeconds());
     m_variableProvider = std::make_unique<HeadphonesVariableProvider>(*m_controller);
     for(const auto& variable : m_variableProvider->variables()) {
         if(!ScriptRegistry::instance().registerVariable(variable)) {
@@ -71,6 +72,11 @@ void HeadphonesPlugin::initialise(const CorePluginContext& context)
     QObject::connect(m_preferences.get(), &HeadphonesSettings::volumeChanged, this, [this]() {
         if(!m_stopping) {
             m_controller->setVolume(m_preferences->volume());
+        }
+    });
+    QObject::connect(m_preferences.get(), &HeadphonesSettings::previewStartOffsetChanged, this, [this]() {
+        if(!m_stopping) {
+            m_controller->setPreviewStartOffsetSeconds(m_preferences->previewStartOffsetSeconds());
         }
     });
     QObject::connect(m_controller.get(), &PreviewController::snapshotChanged, this,

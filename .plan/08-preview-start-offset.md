@@ -1,6 +1,7 @@
 # Ticket 08: fixed configurable preview start offset
 
-Status: planned.
+Status: implemented. Automated settings, GUI/action, and engine sample-level
+regressions cover the acceptance criteria below.
 
 ## Goal and scope
 
@@ -51,13 +52,28 @@ points, remembered per-track positions, and looping are outside its scope.
 
 ## Acceptance criteria
 
-- [ ] Default/missing setting preserves existing start-at-zero behaviour.
-- [ ] Settings round-trip, Apply/Cancel, and invalid/oversized stored values are
+- [x] Default/missing setting preserves existing start-at-zero behaviour.
+- [x] Settings round-trip, Apply/Cancel, and invalid/oversized stored values are
   covered; changing the offset leaves ongoing playback untouched.
-- [ ] Fresh preview and explicit restart begin at the offset; pause/resume and
+- [x] Fresh preview and explicit restart begin at the offset; pause/resume and
   manual seeking do not reapply it.
-- [ ] Worker/engine tests inspect first emitted samples for whole files and
+- [x] Worker/engine tests inspect first emitted samples for whole files and
   bounded segments, including exact source offset application.
-- [ ] Short tracks, unknown duration/EOF, unseekable sources, and source timeline
+- [x] Short tracks, unknown duration/EOF, unseekable sources, and source timeline
   overflow follow the documented rules without stale-session audio.
-- [ ] Main playback, queue, volume, and output remain independent.
+- [x] Main playback, queue, volume, and output remain independent.
+
+## Implementation notes
+
+- The spin box and persisted setting accept 0–2,147,483,647 whole seconds;
+  invalid, negative, fractional, or oversized saved values read as 0.
+- `PreviewController` snapshots the applied policy into each fresh generation.
+  Resume and manual seek retain their separate semantics.
+- The worker resolves duration/seekability fallback before source-timeline
+  arithmetic and publishes the effective logical position with its open result.
+  Source offsets and bounded end times are range-checked before seeking.
+- Regression coverage lives in `previewenginetest`, `previewoutputtest`, and
+  `headphonesguitest`; existing default-offset tests exercise unchanged playback.
+
+Validation: `cmake --build --preset test-agent -j 4` and
+`ctest --preset test-agent` pass (all seven test suites).

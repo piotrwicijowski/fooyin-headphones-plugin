@@ -29,6 +29,7 @@
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSlider>
+#include <QSpinBox>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
@@ -722,11 +723,17 @@ private Q_SLOTS:
         HeadphonesSettingsDialog dialog {settings, catalogue};
         auto* combo   = dialog.findChild<QComboBox*>(u"Headphones.DeviceChoice"_s);
         auto* buttons = dialog.findChild<QDialogButtonBox*>(u"Headphones.SettingsButtons"_s);
-        QVERIFY(combo && buttons);
+        auto* offset  = dialog.findChild<QSpinBox*>(u"Headphones.PreviewStartOffsetSeconds"_s);
+        QVERIFY(combo && buttons && offset);
+        QCOMPARE(offset->value(), 0);
+        QCOMPARE(offset->minimum(), 0);
+        QCOMPARE(offset->maximum(), HeadphonesSettings::MaxPreviewStartOffsetSeconds);
         QCOMPARE(combo->currentData().toByteArray(), QByteArray {"missing"});
         QVERIFY(combo->currentText().contains(u"Unavailable"));
         QVERIFY(combo->itemText(1) != combo->itemText(2));
         combo->setCurrentIndex(combo->findData(QByteArray {"b"}));
+        offset->setValue(23);
+        QCOMPARE(settings.previewStartOffsetSeconds(), 0);
         QCOMPARE(settings.deviceId(), QByteArray {"missing"});
         catalogue.change({fakeDevice("a")});
         QCOMPARE(combo->currentData().toByteArray(), QByteArray {"b"});
@@ -735,11 +742,105 @@ private Q_SLOTS:
         QCOMPARE(combo->currentData().toByteArray(), QByteArray {"b"});
         QTest::mouseClick(buttons->button(QDialogButtonBox::Apply), Qt::LeftButton);
         QCOMPARE(settings.deviceId(), QByteArray {"b"});
+        QCOMPARE(settings.previewStartOffsetSeconds(), 23);
         settings.setVolume(0.7);
         combo->setCurrentIndex(combo->findData(QByteArray {"a"}));
+        offset->setValue(45);
         QTest::mouseClick(buttons->button(QDialogButtonBox::Cancel), Qt::LeftButton);
         QCOMPARE(settings.deviceId(), QByteArray {"b"});
         QCOMPARE(settings.volume(), 0.7); // Dialog cannot overwrite newer live volume.
+        QCOMPARE(settings.previewStartOffsetSeconds(), 23);
+        dialog.show(); // Shared dialog must discard the cancelled draft on reopening.
+        QCOMPARE(offset->value(), 23);
+        QCOMPARE(combo->currentData().toByteArray(), QByteArray {"b"});
+        offset->setValue(HeadphonesSettings::MaxPreviewStartOffsetSeconds);
+        buttons->button(QDialogButtonBox::Ok)->click();
+        QCOMPARE(settings.previewStartOffsetSeconds(), HeadphonesSettings::MaxPreviewStartOffsetSeconds);
+    }
+
+    void appliedOffsetIsUsedByAllPreviewAndRestartActions()
+    {
+        QTemporaryDir dir;
+        SettingsManager manager {dir.filePath(u"settings.ini"_s)};
+        HeadphonesSettings settings {&manager};
+        settings.setPreviewStartOffsetSeconds(1);
+        PreviewHarness h;
+        auto plan         = h.add(u"offset.wav"_s);
+        plan->totalFrames = 5000;
+        h.create();
+        h.controller->setPreviewStartOffsetSeconds(settings.previewStartOffsetSeconds());
+        connect(&settings, &HeadphonesSettings::previewStartOffsetChanged, h.controller.get(), [&]() {
+            h.controller->setPreviewStartOffsetSeconds(settings.previewStartOffsetSeconds());
+        });
+        HeadphonesActions actions {*h.controller, nullptr};
+        const Track track {u"offset.wav"_s};
+        actions.setSelection({track}, {track});
+        actions.previewDisplaySelection();
+        QTRY_VERIFY(!h.output->stream.empty());
+        QCOMPARE(sampleAt(h.output->stream, 0), int16_t {1000});
+
+        FakeDeviceCatalogue catalogue;
+        HeadphonesSettingsDialog dialog {settings, catalogue};
+        auto* offset  = dialog.findChild<QSpinBox*>(u"Headphones.PreviewStartOffsetSeconds"_s);
+        auto* buttons = dialog.findChild<QDialogButtonBox*>(u"Headphones.SettingsButtons"_s);
+        QVERIFY(offset && buttons);
+        auto generation = h.controller->snapshot().generation;
+        const auto resets = h.output->resets;
+        const auto volume = h.controller->snapshot().volume;
+        offset->setValue(2);
+        QCOMPARE(settings.previewStartOffsetSeconds(), 1);
+        buttons->button(QDialogButtonBox::Apply)->click();
+        QCOMPARE(settings.previewStartOffsetSeconds(), 2);
+        QCOMPARE(h.controller->snapshot().generation, generation);
+        QCOMPARE(h.controller->snapshot().positionMs, uint64_t {1000});
+        QCOMPARE(h.controller->snapshot().volume, volume);
+        QCOMPARE(h.output->resets, resets);
+        QCOMPARE(plan->opens.load(), 1);
+
+        actions.playAction()->trigger(); // Explicit Play on active preview restarts.
+        QTRY_VERIFY(!h.output->stream.empty());
+        QCOMPARE(sampleAt(h.output->stream, 0), int16_t {2000});
+        actions.pauseAction()->trigger();
+        generation = h.controller->snapshot().generation;
+        offset->setValue(3);
+        buttons->button(QDialogButtonBox::Apply)->click();
+        QCOMPARE(h.controller->snapshot().state, PreviewState::Paused);
+        actions.playAction()->trigger(); // Play while paused resumes without the new offset.
+        QCOMPARE(h.controller->snapshot().generation, generation);
+        QCOMPARE(h.controller->snapshot().positionMs, uint64_t {2000});
+
+        QMenu menu;
+        TrackSelection selection;
+        selection.tracks = {track};
+        actions.renderMenu(&menu, selection);
+        menu.actions().front()->trigger();
+        QTRY_VERIFY(!h.output->stream.empty());
+        QCOMPARE(sampleAt(h.output->stream, 0), int16_t {3000});
+        settings.setPreviewStartOffsetSeconds(4);
+        actions.findChild<QAction*>(u"Headphones.Tracks.PreviewSelected"_s)->trigger();
+        QTRY_VERIFY(!h.output->stream.empty());
+        QCOMPARE(sampleAt(h.output->stream, 0), int16_t {4000});
+
+        h.output->canDrain = true;
+        QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Stopped);
+        QCOMPARE(h.controller->snapshot().positionMs, uint64_t {0});
+        h.output->canDrain = false;
+        settings.setPreviewStartOffsetSeconds(1);
+        actions.playAction()->trigger(); // Explicit Play after EOF.
+        QTRY_VERIFY(!h.output->stream.empty());
+        QCOMPARE(sampleAt(h.output->stream, 0), int16_t {1000});
+        actions.stopAction()->trigger();
+        settings.setPreviewStartOffsetSeconds(2);
+        actions.playPauseAction()->trigger(); // Play/Pause after Stop.
+        QTRY_VERIFY(!h.output->stream.empty());
+        QCOMPARE(sampleAt(h.output->stream, 0), int16_t {2000});
+        h.output->canDrain = true;
+        QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Stopped);
+        h.output->canDrain = false;
+        settings.setPreviewStartOffsetSeconds(3);
+        actions.playPauseAction()->trigger(); // Play/Pause after EOF.
+        QTRY_VERIFY(!h.output->stream.empty());
+        QCOMPARE(sampleAt(h.output->stream, 0), int16_t {3000});
     }
 
     void settingsProviderIsSharedAndDoesNotStartAudio()
