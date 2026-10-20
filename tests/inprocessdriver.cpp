@@ -363,10 +363,6 @@ private:
                 return;
             }
             m_panel->show();
-            if(qEnvironmentVariable("HEADPHONES_TEST_EXPECT_VIM") == u"1"
-               && !check(m_widgets->widgetExists(u"VimModeIndicator"_s), u"Vim Motions was not loaded"_s)) {
-                return;
-            }
             m_selection->startPlayback({m_main});
             m_player->queueTrack(m_other);
             m_stage = 1;

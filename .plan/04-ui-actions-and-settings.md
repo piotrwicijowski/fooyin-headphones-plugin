@@ -4,7 +4,7 @@ Depends on: [02-session-and-decoding.md](02-session-and-decoding.md) and
 [03-audio-output-and-devices.md](03-audio-output-and-devices.md).
 
 Status: implemented and verified, including actual loaded-plugin, same-process
-main-player coexistence with Vim Motions. The subsequent user-confirmed physical
+main-player isolation. The subsequent user-confirmed physical
 Bluetooth disconnect result and WirePlumber policy are recorded in Phase 3;
 wider hardware coverage remains Phase 5 work.
 
@@ -39,10 +39,8 @@ Register stable action IDs under a **Headphones Preview** category:
 | `Headphones.Seek.Backward.Large` | Seek headphone preview backward (large step) | Seek back by fooyin's large seek increment when seekable |
 | `Headphones.Seek.Forward.Large` | Seek headphone preview forward (large step) | Seek forward by fooyin's large seek increment when seekable |
 
-Expose these via fooyin's `ActionManager` so users can assign shortcuts, including
-when using the Vim Motions plugin. Start without default key assignments to
-avoid stealing existing transport/Vim keys. No direct dependency on Vim Motions
-or a new application-wide event filter is required.
+Expose these via fooyin's `ActionManager` so users can assign shortcuts. Start
+without default key assignments. No new application-wide event filter is required.
 
 Add **Preview in headphones** to the public track context menu registration
 points used by playlists/library views; add a queue-area registration only if
@@ -54,7 +52,7 @@ explain no selection, unavailable device, or unsupported source.
 
 Register `HeadphonesPreview` through `WidgetProvider`, display name
 **Headphones Preview**, submenu **Playback**, initially limited to one instance.
-Use a `FyWidget` subclass following the sibling Vim plugin's indicator pattern.
+Use a `FyWidget` subclass.
 
 Contents:
 
@@ -87,7 +85,7 @@ Implement `PluginConfigGuiPlugin::settingsProvider()` and a
 single-instance dialog lifecycle; use this rather than an unrelated window.
 
 Persist under a namespaced `Headphones/...` prefix using public SettingsManager
-facilities, following the sibling plugin's typed settings patterns where useful:
+facilities:
 
 | Setting | Initial value | Meaning |
 | --- | --- | --- |
@@ -124,8 +122,6 @@ Dialog behaviour:
   and can be destroyed/recreated without resetting main or preview playback.
 - [x] Settings round-trip opaque IDs, duplicate names, missing-device state,
   volume bounds, Apply/Cancel, and no autoplay after restart/reconnect.
-- [x] Keyboard actions coexist with ordinary fooyin transport and a separately
-  loaded Vim Motions plugin; no custom Vim integration is necessary.
 - [x] No preview action emits main-player transport/track events, changes main
   volume/output settings, or mutates the queue/playlist.
 
@@ -198,8 +194,8 @@ The driver requires `HEADPHONES_INPROCESS_TEST=1`, two explicit distinct Qt outp
 IDs, three distinct 20-second local fixtures, an isolated configuration and the
 default English UI. README contains the launch command.
 
-The executed test loaded the actual Headphones plugin, the driver's module, and
-the sibling Vim Motions module into the matching fooyin process. The main player
+The executed test exercised the actual Headphones plugin and the driver's module
+in the matching fooyin process. The main player
 used its real engine/decoder and a test-only explicit-device QAudioSink backend
 on software sink A; the actual Headphones plugin used its normal output path on
 software sink B. The driver waited until the main engine had submitted at least
@@ -207,7 +203,7 @@ software sink B. The driver waited until the main engine had submitted at least
 
 1. An actual context-menu preview action retained Preview A despite subsequent
    focus/selection changes to Preview B.
-2. A configured Ctrl+Alt+Shift+F12 shortcut paused preview with Vim Motions loaded.
+2. A configured Ctrl+Alt+Shift+F12 shortcut paused preview.
    Main position and submitted output frames continued increasing during pause.
 3. Live volume changed to 61%, and a seek to 10 seconds remained paused.
 4. Resume and panel destruction/recreation preserved the actual shared session.
@@ -221,7 +217,7 @@ software sink B. The driver waited until the main engine had submitted at least
    track/play-count, device/output or volume/output-setting events.
 
 The final run printed `HEADPHONES SAME-PROCESS PASS` with **85,207 main output
-frames** and exited status 0 with clean Headphones/Vim shutdown. This establishes
+frames** and exited status 0 with clean shutdown. This establishes
 same-process host/UI/engine coexistence on the documented software backend. It is
 not physical PipeWire disconnect/leak-free routing acceptance; the Phase 3
 limitation remains recorded and requires separate hardware/backend work.

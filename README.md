@@ -222,8 +222,8 @@ To restore the usual default, use `wpctl settings --save linking.pause-playback 
 - If no audio devices are listed, check the Qt Multimedia platform audio backend
   and its runtime dependencies.
 - Enable debug output with `QT_LOGGING_RULES='fy.headphones.debug=true'` when
-  launching fooyin. See the [development guide](docs/development.md) for logging,
-  device enumeration, and integration diagnostics.
+  launching fooyin. See the [development guide](docs/development.md) for logging
+  and integration diagnostics.
 
 ## Contributing
 

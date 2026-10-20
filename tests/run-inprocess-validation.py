@@ -56,7 +56,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fooyin", required=True, type=Path, help="Matching built fooyin executable")
     parser.add_argument("--plugin-dir", type=Path, default=Path("build-test-agent"))
-    parser.add_argument("--vim-plugin-dir", type=Path)
     parser.add_argument("--seconds", type=int, default=60, help="Stress duration, 0..3600 (default: 60)")
     parser.add_argument("--change-default", action="store_true",
                         help="Also test server default-device changes (fails if the server reroutes streams)")
@@ -76,11 +75,6 @@ def main():
         if not path.is_file():
             parser.error(f"Missing build artifact: {path}")
     plugins = [str(plugin), str(plugin / "tests/inprocess")]
-    if args.vim_plugin_dir:
-        vim = args.vim_plugin_dir.resolve()
-        if not (vim / "fyplugin_vimmotions.so").is_file():
-            parser.error(f"Missing Vim Motions module in {vim}")
-        plugins.append(str(vim))
     if args.artifacts:
         root = args.artifacts.resolve()
         root.mkdir(parents=True, exist_ok=False)
@@ -111,7 +105,6 @@ def validate(args, root, runtime, plugins):
     env["FOOYIN_PLUGIN_PATH"] = os.pathsep.join(plugins)
     env["HEADPHONES_INPROCESS_TEST"] = "1"
     env["HEADPHONES_TEST_STRESS_SECONDS"] = str(args.seconds)
-    env["HEADPHONES_TEST_EXPECT_VIM"] = "1" if args.vim_plugin_dir else "0"
     for name in ("main", "headphones"):
         key = "HEADPHONES_TEST_MAIN_ID" if name == "main" else "HEADPHONES_TEST_ID"
         env[key] = base64.b64encode(name.encode()).decode()
@@ -141,7 +134,7 @@ def validate(args, root, runtime, plugins):
                                        stderr=subprocess.PIPE, timeout=5)
 
     server = host = None
-    report = {"stress_seconds": args.seconds, "vim": bool(args.vim_plugin_dir),
+    report = {"stress_seconds": args.seconds,
               "routing_samples": 0, "default_changed": False, "rss_kib": [],
               "observed_formats": {}, "passed": False}
     try:

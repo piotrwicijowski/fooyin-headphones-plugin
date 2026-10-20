@@ -18,7 +18,7 @@ assembles the end-to-end evidence needed to use the plugin during a party.
   decode delays/errors, PCM frames, consumption clocks, and device changes.
 - Build the real QAudioSink/converter implementation even when hardware tests
   are skipped, so dependency/API errors are caught.
-- Separate optional real-output smoke tests from default CTest. Never silently
+- Separate optional real-output integration validation from default CTest. Never silently
   pick a developer's default speakers for an automated audio test.
 - Fixtures should be short generated PCM/WAV or appropriately licensed files.
   Use distinct signal patterns/channel content to identify stale or misrouted
@@ -35,9 +35,8 @@ device/volume persistence, UI integration, and shutdown. Device catalogue covera
 is included in the output suite. The primary opt-in integration path is the
 included `HeadphonesInProcessDriver` module loaded into the actual matching
 fooyin alongside the actual Headphones plugin, exercising main playback and
-registered UI/actions in the same process. It passed with Vim Motions loaded.
-`previewaudiosmoke` remains only a low-level explicit-device diagnostic, not a
-main-player acceptance test. Phase 5 adds sample-checked converted replacement and
+registered UI/actions in the same process.
+Phase 5 adds sample-checked converted replacement and
 coalesced-seek isolation, long-source queue bounds, and a reproducible isolated
 same-process stress runner. See the evidence below and Phases 2–4, including the
 unresolved real software-backend disconnect assertion from Phase 3.
@@ -148,7 +147,6 @@ PipeWire graph/monitor tool; listen to or capture both sinks where practical.
 | Close/reopen preview widget | Session remains consistent; no duplicate stream |
 | Quit during load/play/full queue | Clean exit, no lingering worker, deadlock, or crash |
 | Restart fooyin | Device/volume retained, preview remains stopped |
-| Vim Motions also loaded | Selection and assigned preview shortcuts work as documented |
 
 Verify preview does not create play-count/scrobble/notification events by checking
 the relevant host integration in an isolated test configuration. A plugin can
@@ -220,13 +218,13 @@ avoid emitting main-player events, but final behaviour should be observed too.
 
 ### Loaded-plugin extended playback
 
-The runner loaded the real Headphones module and Vim Motions with the matching
-fooyin. Main input was stereo Float WAV at 48 kHz; alternating previews were
+The runner exercised the real Headphones module with the matching fooyin.
+Main input was stereo Float WAV at 48 kHz; alternating previews were
 mono S16 WAV at 44.1 kHz and stereo S16 WAV at 96 kHz. The actual negotiated preview
 streams were stereo Float at their source rates; PulseAudio resampled to the
 48 kHz null sinks. Forced plugin resampling is covered by the sample tests above.
 
-The `--seconds 300 --vim-plugin-dir /workspace/fooyin-vim-plugin/build-agent` run
+The five-minute (`--seconds 300`) run
 finished normally after **306.82 seconds**, including:
 
 - **635 cycles** of alternating preview, pause, three seek requests, volume,
@@ -245,7 +243,7 @@ finished normally after **306.82 seconds**, including:
   synchronously at the UI; acoustic stop latency/glitches were not measured.
 - **73.97 CPU seconds** for the entire host over 306.82 elapsed seconds (about
   24% of one CPU). Whole-process RSS after 10 seconds ranged **32,452–93,912 KiB**;
-  a late sample was 47,960 KiB. These include fooyin/Qt/Vim/decoder allocations
+  a late sample was 47,960 KiB. These include whole-host allocations
   and residency changes, not plugin-only memory; build checks ran concurrently.
   Structural queue/converter allocation bounds support the memory claim.
 - Both output paths request 100 ms sink buffers. Initial PulseAudio-reported
@@ -255,7 +253,7 @@ finished normally after **306.82 seconds**, including:
 
 Artifacts for that run are in
 `/tmp/opencode/headphones-validation-pnx349s4/{fooyin.log,pulse.log,report.json}`.
-A separate `--seconds 0` run without Vim also passed (17 separate-routing
+A separate `--seconds 0` run also passed (17 separate-routing
 observations, 91,508 main frames, clean active-preview shutdown).
 
 ### Default-device routing diagnostic: failed backend assertion

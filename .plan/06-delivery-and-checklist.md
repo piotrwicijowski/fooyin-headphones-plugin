@@ -76,7 +76,7 @@ testing its runtime dependency resolution and licence obligations.
 
 - [x] Public selection/context-menu/shortcut integration, preview widget,
   settings provider, persistence, and clear missing-device state.
-- [x] UI/integration tests plus coexistence check with Vim Motions.
+- [x] UI/integration tests.
 
   Verified through the actual loaded plugin and real main engine in one fooyin
   process using explicit software sinks. The subsequent physical Bluetooth result

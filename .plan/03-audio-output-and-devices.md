@@ -204,9 +204,6 @@ Avoid making the whole controller depend on a particular Qt-version namespace.
   exercise partial-frame/zero writes, QIODevice destruction/reset epochs, backend
   failure/recovery, requested/actual buffer sizes, paused processed clocks, underrun
   versus EOF, opaque-ID persistence, and logarithmic UI volume.
-- `previewaudiosmoke` is built with tests but is not part of CTest. It requires
-  `--device-id BASE64_ID`, or only lists IDs via `--list-devices`. A real explicit
-  Qt sink completed a generated one-second tone on a PulseAudio 17 null sink.
 - No `/dev/snd`, PipeWire daemon, or physical output devices are available in this
   container. PulseAudio 17/FFmpeg tools and their missing dependencies were
   extracted under `/tmp/opencode/headphones-audio-deps`, with an isolated server

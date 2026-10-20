@@ -120,10 +120,8 @@ python3 tests/run-inprocess-validation.py \
   --seconds 300
 ```
 
-Add `--vim-plugin-dir /path/to/fooyin-vim-plugin/build` to exercise configured
-shortcuts with Vim Motions loaded. `--seconds 0` runs only the integration
-workflow; the default is 60 seconds of repeated replacement, paused seek bursts,
-resume, volume, and stop.
+`--seconds 0` runs only the integration workflow; the default is 60 seconds of
+repeated replacement, paused seek bursts, resume, volume, and stop.
 
 The runner checks live routing, rejects duplicate/colliding streams, samples
 whole-process CPU/RSS, and retains logs, fixtures, and `report.json` in the printed
@@ -158,26 +156,11 @@ env FOOYIN_PLUGIN_PATH="$PWD/build-test-agent:$PWD/build-test-agent/tests/inproc
   /path/to/matching/fooyin --skip-single
 ```
 
-For Vim coexistence, append its matching build directory to `FOOYIN_PLUGIN_PATH`
-and set `HEADPHONES_TEST_EXPECT_VIM=1`. The driver assigns test shortcuts, selects
-the test main backend, suppresses first-run Quick Setup, and exits after printing
+The driver assigns test shortcuts, selects the test main backend, suppresses
+first-run Quick Setup, and exits after printing
 `HEADPHONES SAME-PROCESS PASS`. The failure timeout is 45 seconds, extended by
 `HEADPHONES_TEST_STRESS_SECONDS` when set (0–3600). For stress runs, the main fixture
 must be at least that duration plus 20 seconds.
-
-### Device enumeration and tone diagnostic
-
-Tests also build a low-level audio diagnostic, outside CTest:
-
-```sh
-build-test-agent/tests/previewaudiosmoke --list-devices
-build-test-agent/tests/previewaudiosmoke --device-id 'BASE64_ID_FROM_THE_LIST'
-```
-
-The second command plays a one-second 440 Hz tone only on the supplied device.
-An unavailable ID fails rather than opening the default. Use the integration
-driver to check main-player coexistence and real hardware to check physical
-routing and disconnects.
 
 ## Logging and debugging
 
@@ -247,8 +230,7 @@ Settings use fooyin's public SettingsManager; playback state is never persisted.
 Development validation used Debian 13 x86_64, GCC 14.2.0, CMake 3.31.6, Qt 6.8.2,
 libswresample 5.3.100, libavutil 59.39.100, and fooyin 0.13.1. Recorded checks
 include Debug/RelWithDebInfo builds, module lifecycle, ASan/UBSan checks, real
-fooyin decoder fixtures, and a five-minute same-process run with Vim Motions.
-The latter completed 635 cycles and 1,818 separate-routing observations.
+fooyin decoder fixtures, and same-process integration validation.
 
 Installed-SDK delivery, the Qt 6.4 runtime, other platforms, and wider physical
 device coverage remain unverified. The user-tested Bluetooth setup is described

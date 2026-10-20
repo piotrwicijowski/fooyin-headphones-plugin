@@ -37,7 +37,7 @@ small compatibility boundary if needed.
 
 ## Fooyin discovery modes
 
-Adapt the Vim plugin's two-mode approach:
+Support two discovery modes:
 
 1. **Installed SDK:** `find_package(Fooyin CONFIG ...)`, imported targets, and
    `create_fooyin_plugin(Headphones ...)`. Fooyin needs `INSTALL_HEADERS=ON`.
@@ -75,7 +75,7 @@ presets. A test preset should set `QT_QPA_PLATFORM=offscreen`.
 
 ## Makefile
 
-Retain the useful names/conventions of the Vim plugin:
+Provide these development targets:
 
 - `help`, `fooyin-configure`, `fooyin-build`.
 - `configure`, `configure-release`, `build`, `build-release`.
@@ -88,7 +88,7 @@ optional `XDG_CONFIG_HOME`. Default debug logging to `fy.headphones.debug=true`.
 Prefer the actual sibling directory in this workspace, with overrides for other
 mount layouts. Auto-detect the known `run/fooyin` and `run/bin/fooyin` layouts.
 
-Improve on the reference where necessary:
+Workflow requirements:
 
 - Encode configure -> build -> copy dependencies so `make -j dev` cannot race.
 - Have `install-plugin` build or verify the current target, rather than copying

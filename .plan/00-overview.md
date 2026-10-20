@@ -2,7 +2,7 @@
 
 Status: Phases 1–4 software implemented. Phase 5 automated consolidation and
 repeatable same-process software-backend validation now pass, including a
-five-minute/635-cycle run with main playback and Vim Motions. Phase 5 physical
+five-minute/635-cycle run with main playback. Phase 5 physical
 acceptance and Phase 6 installed-SDK/delivery checks remain. A user confirmed
 physical main-A/Bluetooth-preview-B disconnect behavior after disabling
 WirePlumber's `linking.pause-playback` policy. Exact environment details and wider
@@ -24,8 +24,8 @@ has its own transport, position, volume, and output device.
   headphones. Keep application code portable to other supported Qt platforms.
 - Use fooyin's installed public plugin APIs and registered decoders. No fooyin
   core modifications or private-header dependencies are planned.
-- Adapt build/development conventions from `../../fooyin-vim-plugin`, especially
-  its `Makefile`, dual CMake discovery modes, presets, and separate agent builds.
+- Use a Makefile, dual CMake discovery modes, presets, and separate agent builds
+  for the development workflow.
 
 ## First-release scope
 
@@ -141,8 +141,6 @@ Useful references, relative to this `.plan` directory:
 - `../../fooyin/src/plugins/spectrogram/spectrogramgenerator.cpp`: independent
   decoder, concurrent-decoding check, offset handling, and cancellation precedent.
 - `../../fooyin/src/plugins/rgscanner/rgscannerplugin.cpp`: selection/menu integration.
-- `../../fooyin-vim-plugin/{CMakeLists.txt,CMakePresets.json,Makefile}`
-- `../../fooyin-vim-plugin/src/vimmotionsplugin.cpp`: widget and settings provider.
 - [Qt QAudioSink](https://doc.qt.io/qt-6/qaudiosink.html),
   [QAudioDevice](https://doc.qt.io/qt-6/qaudiodevice.html), and
   [QMediaDevices](https://doc.qt.io/qt-6/qmediadevices.html).
