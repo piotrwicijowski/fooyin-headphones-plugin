@@ -9,6 +9,7 @@ class QAction;
 class QMenu;
 namespace Fooyin {
 class ActionManager;
+class SettingsManager;
 struct TrackSelection;
 } // namespace Fooyin
 
@@ -18,7 +19,7 @@ class HeadphonesActions : public QObject
 {
     Q_OBJECT
 public:
-    HeadphonesActions(PreviewController& controller, ActionManager* manager);
+    HeadphonesActions(PreviewController& controller, ActionManager* manager, SettingsManager* settings = nullptr);
     ~HeadphonesActions() override;
     void setSelection(TrackList focused, TrackList display);
     void renderMenu(QMenu* menu, const TrackSelection& selection);
@@ -35,9 +36,10 @@ Q_SIGNALS:
 
 private:
     void updateActions();
-    void seekBy(int64_t delta);
+    void seekByStep(bool forward, bool largeStep);
     PreviewController& m_controller;
     QPointer<ActionManager> m_manager;
+    QPointer<SettingsManager> m_settings;
     TrackList m_focused;
     TrackList m_display;
     std::vector<QAction*> m_actions;

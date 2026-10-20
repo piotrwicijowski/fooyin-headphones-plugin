@@ -10,6 +10,7 @@
 #include "headphonestrackinfo.h"
 #include "headphonesvolumecontrol.h"
 
+#include <gui/guisettings.h>
 #include <gui/trackselectioncontroller.h>
 #include <gui/widgets/elidedlabel.h>
 #include <utils/actions/actionmanager.h>
@@ -499,7 +500,7 @@ private Q_SLOTS:
         h.create();
         {
             HeadphonesActions actions {*h.controller, &manager};
-            auto* command = manager.command("Headphones.PreviewSelected");
+            auto* command = manager.command("Headphones.Tracks.PreviewSelected");
             QVERIFY(command);
             QVERIFY(command->defaultShortcuts().isEmpty());
             QCOMPARE(command->categories(), QStringList {u"Headphones Preview"_s});
@@ -515,7 +516,7 @@ private Q_SLOTS:
             h.controller->stop();
             // Player controls keep the last display selection after focus moves off the view.
             actions.setSelection({}, {Track {u"second.wav"_s}});
-            auto* shortcut = actions.findChild<QAction*>(u"Headphones.PreviewSelected"_s);
+            auto* shortcut = actions.findChild<QAction*>(u"Headphones.Tracks.PreviewSelected"_s);
             QVERIFY(!shortcut->isEnabled());
             actions.previewDisplaySelection();
             QTRY_COMPARE(second->opens.load(), 1);
@@ -525,7 +526,80 @@ private Q_SLOTS:
             QVERIFY(!shortcut->isEnabled());
             QCOMPARE(h.controller->snapshot().track.filepath(), u"second.wav"_s);
         }
-        QVERIFY(!manager.command("Headphones.PreviewSelected"));
+        QVERIFY(!manager.command("Headphones.Tracks.PreviewSelected"));
+    }
+
+    void seekActionsFollowPlaybackSettings_data()
+    {
+        QTest::addColumn<QString>("actionId");
+        QTest::addColumn<bool>("forward");
+        QTest::addColumn<bool>("largeStep");
+        QTest::newRow("small-backward") << u"Headphones.Seek.Backward.Small"_s << false << false;
+        QTest::newRow("small-forward") << u"Headphones.Seek.Forward.Small"_s << true << false;
+        QTest::newRow("large-backward") << u"Headphones.Seek.Backward.Large"_s << false << true;
+        QTest::newRow("large-forward") << u"Headphones.Seek.Forward.Large"_s << true << true;
+    }
+
+    void seekActionsFollowPlaybackSettings()
+    {
+        QFETCH(QString, actionId);
+        QFETCH(bool, forward);
+        QFETCH(bool, largeStep);
+        QTemporaryDir dir;
+        SettingsManager settings {dir.filePath(u"settings.ini"_s)};
+        settings.createSetting<Settings::Gui::SeekStepSmall>(700, u"Interface/SeekIncrement"_s);
+        settings.createSetting<Settings::Gui::SeekStepLarge>(4300, u"Interface/SeekIncrementLarge"_s);
+        QMainWindow mainWindow;
+        ActionManager manager {&settings};
+        manager.setMainWindow(&mainWindow);
+        PreviewHarness h;
+        h.add(u"preview.wav"_s);
+        auto unseekable = h.add(u"unseekable.wav"_s);
+        unseekable->seekable = false;
+        h.create();
+        {
+            HeadphonesActions actions {*h.controller, &manager, &settings};
+            auto* command = manager.command(Id {actionId});
+            QVERIFY(command);
+            QVERIFY(command->defaultShortcuts().isEmpty());
+            QCOMPARE(command->categories(), QStringList {u"Headphones Preview"_s});
+            auto* action = actions.findChild<QAction*>(actionId);
+            QVERIFY(action);
+            QVERIFY(!action->isEnabled());
+            Track track {u"preview.wav"_s};
+            track.setDuration(30000);
+            h.controller->previewTrack(track);
+            QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Playing);
+            h.controller->playPause();
+            QVERIFY(h.controller->seek(15000));
+            QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Paused);
+            QVERIFY(action->isEnabled());
+            action->trigger();
+            const int step = largeStep ? 4300 : 700;
+            const int64_t expected = 15000 + (forward ? step : -step);
+            QTRY_COMPARE(h.controller->snapshot().positionMs, expected);
+            QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Paused);
+
+            // Read the shared settings at trigger time, without recreating the actions.
+            settings.set<Settings::Gui::SeekStepSmall>(1100);
+            settings.set<Settings::Gui::SeekStepLarge>(6100);
+            action->trigger();
+            const int updatedStep = largeStep ? 6100 : 1100;
+            QTRY_COMPARE(h.controller->snapshot().positionMs, expected + (forward ? updatedStep : -updatedStep));
+            QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Paused);
+
+            QVERIFY(h.controller->seek(forward ? 29900 : 100));
+            QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Paused);
+            action->trigger();
+            QTRY_COMPARE(h.controller->snapshot().positionMs, forward ? uint64_t {30000} : uint64_t {0});
+            QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Paused);
+            h.controller->stop();
+            QVERIFY(!action->isEnabled());
+            h.controller->previewTrack(Track {u"unseekable.wav"_s});
+            QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Playing);
+            QVERIFY(!action->isEnabled());
+        }
+        QVERIFY(!manager.command(Id {actionId}));
     }
 
     void settingsStageApplyCancelAndRetainMissingId()

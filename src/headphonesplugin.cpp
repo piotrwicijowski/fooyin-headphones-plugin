@@ -107,7 +107,7 @@ void HeadphonesPlugin::initialise(const GuiPluginContext& context)
     m_devices        = std::make_unique<HeadphoneDevices>();
     applyOutputDevice();
     m_settingsUi = std::make_shared<HeadphonesSettingsProvider>(*m_preferences, *m_devices);
-    m_actions    = std::make_unique<HeadphonesActions>(*m_controller, context.actionManager);
+    m_actions    = std::make_unique<HeadphonesActions>(*m_controller, context.actionManager, m_settingsManager);
     if(context.trackSelection) {
         const QPointer<TrackSelectionController> selection {context.trackSelection};
         const QPointer<HeadphonesActions> actions {m_actions.get()};
@@ -123,7 +123,7 @@ void HeadphonesPlugin::initialise(const GuiPluginContext& context)
         }
         selection->registerTrackContextAction(
             m_actions.get(), TrackContextMenuArea::Track, Constants::Menus::Context::TrackSelection,
-            "Headphones.PreviewSelected", tr("Preview in headphones"),
+            "Headphones.Tracks.PreviewSelected", tr("Preview in headphones"),
             [actions](QMenu* menu, const TrackSelection& tracks) {
                 if(actions) {
                     actions->renderMenu(menu, tracks);

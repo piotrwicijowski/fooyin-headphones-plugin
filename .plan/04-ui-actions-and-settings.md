@@ -31,11 +31,13 @@ Register stable action IDs under a **Headphones Preview** category:
 
 | ID | Label | Behaviour |
 | --- | --- | --- |
-| `Headphones.PreviewSelected` | Preview in headphones | Start selected track from its beginning |
-| `Headphones.PlayPause` | Play/pause headphone preview | Pause/resume or restart retained preview |
-| `Headphones.Stop` | Stop headphone preview | Discard audio and reset preview position |
-| `Headphones.SeekBackward` | Seek headphone preview backward | Seek back 5 seconds when seekable |
-| `Headphones.SeekForward` | Seek headphone preview forward | Seek forward 5 seconds when seekable |
+| `Headphones.Tracks.PreviewSelected` | Preview in headphones | Start selected track from its beginning |
+| `Headphones.Playback.PlayPause` | Play/pause headphone preview | Pause/resume or restart retained preview |
+| `Headphones.Playback.Stop` | Stop headphone preview | Discard audio and reset preview position |
+| `Headphones.Seek.Backward.Small` | Seek headphone preview backward (small step) | Seek back by fooyin's small seek increment when seekable |
+| `Headphones.Seek.Forward.Small` | Seek headphone preview forward (small step) | Seek forward by fooyin's small seek increment when seekable |
+| `Headphones.Seek.Backward.Large` | Seek headphone preview backward (large step) | Seek back by fooyin's large seek increment when seekable |
+| `Headphones.Seek.Forward.Large` | Seek headphone preview forward (large step) | Seek forward by fooyin's large seek increment when seekable |
 
 Expose these via fooyin's `ActionManager` so users can assign shortcuts, including
 when using the Vim Motions plugin. Start without default key assignments to

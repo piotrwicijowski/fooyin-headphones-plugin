@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "headphonesactions.h"
 
+#include <gui/guisettings.h>
 #include <gui/trackselectioncontroller.h>
 #include <utils/actions/actionmanager.h>
 #include <utils/actions/command.h>
+#include <utils/settings/settingsmanager.h>
 
 #include <QAction>
 #include <QMenu>
@@ -15,19 +17,23 @@ using namespace Qt::StringLiterals;
 
 namespace Fooyin::Headphones {
 namespace {
-constexpr const char* ActionIds[] {"Headphones.PreviewSelected", "Headphones.PlayPause", "Headphones.Stop",
-                                   "Headphones.SeekBackward", "Headphones.SeekForward", "Headphones.Play",
-                                   "Headphones.Pause"};
+constexpr const char* ActionIds[] {"Headphones.Tracks.PreviewSelected", "Headphones.Playback.PlayPause",
+                                   "Headphones.Playback.Stop", "Headphones.Seek.Backward.Small",
+                                   "Headphones.Seek.Forward.Small", "Headphones.Playback.Play",
+                                   "Headphones.Playback.Pause", "Headphones.Seek.Backward.Large",
+                                   "Headphones.Seek.Forward.Large"};
 }
 
-HeadphonesActions::HeadphonesActions(PreviewController& controller, ActionManager* manager)
+HeadphonesActions::HeadphonesActions(PreviewController& controller, ActionManager* manager, SettingsManager* settings)
     : m_controller {controller}
     , m_manager {manager}
+    , m_settings {settings}
 {
     const QStringList labels {tr("Preview in headphones"), tr("Play/pause headphone preview"),
-                              tr("Stop headphone preview"), tr("Seek headphone preview backward"),
-                              tr("Seek headphone preview forward"), tr("Play headphone preview"),
-                              tr("Pause headphone preview")};
+                              tr("Stop headphone preview"), tr("Seek headphone preview backward (small step)"),
+                              tr("Seek headphone preview forward (small step)"), tr("Play headphone preview"),
+                              tr("Pause headphone preview"), tr("Seek headphone preview backward (large step)"),
+                              tr("Seek headphone preview forward (large step)")};
     for(int i = 0; i < labels.size(); ++i) {
         auto* action = new QAction(labels[i], this);
         action->setObjectName(QString::fromLatin1(ActionIds[i]));
@@ -47,8 +53,10 @@ HeadphonesActions::HeadphonesActions(PreviewController& controller, ActionManage
     });
     connect(m_actions[1], &QAction::triggered, &m_controller, &PreviewController::playPause);
     connect(m_actions[2], &QAction::triggered, &m_controller, &PreviewController::stop);
-    connect(m_actions[3], &QAction::triggered, this, [this]() { seekBy(-5000); });
-    connect(m_actions[4], &QAction::triggered, this, [this]() { seekBy(5000); });
+    connect(m_actions[3], &QAction::triggered, this, [this]() { seekByStep(false, false); });
+    connect(m_actions[4], &QAction::triggered, this, [this]() { seekByStep(true, false); });
+    connect(m_actions[7], &QAction::triggered, this, [this]() { seekByStep(false, true); });
+    connect(m_actions[8], &QAction::triggered, this, [this]() { seekByStep(true, true); });
     connect(playAction(), &QAction::triggered, this, [this]() {
         const auto snapshot = m_controller.snapshot();
         if(snapshot.pauseRequested || snapshot.state == PreviewState::Stopped || snapshot.state == PreviewState::Error) {
@@ -134,7 +142,7 @@ void HeadphonesActions::renderMenu(QMenu* menu, const TrackSelection& selection)
     // A menu owns its action and immutable target. Never reuse the shortcut
     // action, whose ambient focus/selection may change while a menu is open.
     auto* action = menu->addAction(tr("Preview in headphones"));
-    action->setObjectName(u"Headphones.PreviewSelected.Context"_s);
+    action->setObjectName(u"Headphones.Tracks.PreviewSelected.Context"_s);
     const auto reason = previewReason(selection.tracks);
     action->setEnabled(reason.isEmpty());
     action->setToolTip(reason.isEmpty() ? tr("Preview the first selected track") : reason);
@@ -147,11 +155,15 @@ void HeadphonesActions::renderMenu(QMenu* menu, const TrackSelection& selection)
     });
 }
 
-void HeadphonesActions::seekBy(int64_t delta)
+void HeadphonesActions::seekByStep(bool forward, bool largeStep)
 {
+    const int configuredStep = m_settings ? (largeStep ? m_settings->value<Settings::Gui::SeekStepLarge>()
+                                                      : m_settings->value<Settings::Gui::SeekStepSmall>())
+                                          : (largeStep ? 30000 : 4000);
+    const int64_t step = std::max(0, configuredStep);
     const auto position
-        = std::min<uint64_t>(m_controller.snapshot().positionMs, std::numeric_limits<int64_t>::max() - 5000);
-    m_controller.seek(static_cast<int64_t>(position) + delta);
+        = std::min<uint64_t>(m_controller.snapshot().positionMs, std::numeric_limits<int64_t>::max() - step);
+    m_controller.seek(static_cast<int64_t>(position) + (forward ? step : -step));
 }
 
 void HeadphonesActions::updateActions()
@@ -163,8 +175,9 @@ void HeadphonesActions::updateActions()
     m_actions[0]->setToolTip(reason.isEmpty() ? tr("Preview the first selected track") : reason);
     m_actions[1]->setEnabled(active || (snapshot.track.isValid() && snapshot.deviceAvailable));
     m_actions[2]->setEnabled(active || snapshot.state == PreviewState::Error || snapshot.positionMs != 0);
-    m_actions[3]->setEnabled(active && snapshot.seekable);
-    m_actions[4]->setEnabled(active && snapshot.seekable);
+    for(auto* action : {m_actions[3], m_actions[4], m_actions[7], m_actions[8]}) {
+        action->setEnabled(active && snapshot.seekable);
+    }
     playAction()->setEnabled(m_actions[1]->isEnabled());
     pauseAction()->setEnabled(active);
     Q_EMIT availabilityChanged();

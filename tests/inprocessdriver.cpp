@@ -223,8 +223,8 @@ private:
         // Observe the individual widgets' public UI rather than relying on the
         // removed combined widget's status label. Require clock progress before
         // treating a new preview as playing, so loading is not mistaken for playback.
-        if(!m_actions->command("Headphones.Pause")->action()->isEnabled()) {
-            return m_actions->command("Headphones.Stop")->action()->isEnabled() ? u"Error"_s : u"Stopped"_s;
+        if(!m_actions->command("Headphones.Playback.Pause")->action()->isEnabled()) {
+            return m_actions->command("Headphones.Playback.Stop")->action()->isEnabled() ? u"Error"_s : u"Stopped"_s;
         }
         if(m_panel->findChild<QToolButton*>(u"Headphones.PlayPause"_s)->toolTip() == u"Play headphone preview") {
             return u"Paused"_s;
@@ -293,7 +293,7 @@ private:
         TrackSelection selection;
         selection.tracks = {track, m_other};
         m_selection->addTrackContextMenu(menu.get(), selection);
-        auto* action = menu->findChild<QAction*>(u"Headphones.PreviewSelected.Context"_s);
+        auto* action = menu->findChild<QAction*>(u"Headphones.Tracks.PreviewSelected.Context"_s);
         if(!check(action && action->isEnabled(), u"Actual plugin context action missing/disabled"_s)) {
             return;
         }
@@ -405,7 +405,7 @@ private:
                          u"Context-menu snapshot target changed"_s)) {
                 return;
             }
-            auto* command = m_actions->command("Headphones.PlayPause");
+            auto* command = m_actions->command("Headphones.Playback.PlayPause");
             command->setShortcut({QKeySequence::fromString(u"Ctrl+Alt+Shift+F12"_s)});
             m_panel->activateWindow();
             m_panel->setFocus();
@@ -452,7 +452,7 @@ private:
                          u"Paused seek was not applied"_s)) {
                 return;
             }
-            trigger("Headphones.PlayPause");
+            trigger("Headphones.Playback.PlayPause");
             delete m_panel.data();
             m_panel = createPreviewWidgets();
             if(!m_panel) {
@@ -512,7 +512,7 @@ private:
             m_stage = 7;
         }
         else if(m_stage == 7) {
-            auto* command = m_actions->command("Headphones.PreviewSelected");
+            auto* command = m_actions->command("Headphones.Tracks.PreviewSelected");
             if(!command->action()->isEnabled()) {
                 return;
             }
@@ -530,7 +530,7 @@ private:
                          u"Focused preview shortcut targeted the wrong track"_s)) {
                 return;
             }
-            trigger("Headphones.Stop");
+            trigger("Headphones.Playback.Stop");
             m_panel->activateWindow();
             QTest::mouseClick(m_panel->findChild<QToolButton*>(u"Headphones.Preview"_s), Qt::LeftButton);
             m_stage = 9;
@@ -555,9 +555,9 @@ private:
                         << m_maxStartMs << "normal main trackPlayed events" << m_trackPlayed->size();
                 // Outside the measured preview-only interval, exercise independence
                 // in the opposite direction and quit with preview still active.
-                trigger("Headphones.PlayPause");
+                trigger("Headphones.Playback.PlayPause");
                 if(status() == u"Paused") {
-                    trigger("Headphones.PlayPause");
+                    trigger("Headphones.Playback.PlayPause");
                 }
                 m_player->pause();
                 m_stage = 40;
@@ -573,10 +573,10 @@ private:
                 return;
             }
             m_maxStartMs = std::max(m_maxStartMs, m_actionWait.elapsed());
-            trigger("Headphones.PlayPause");
-            trigger("Headphones.SeekForward");
-            trigger("Headphones.SeekBackward");
-            trigger("Headphones.SeekForward");
+            trigger("Headphones.Playback.PlayPause");
+            trigger("Headphones.Seek.Forward.Small");
+            trigger("Headphones.Seek.Backward.Small");
+            trigger("Headphones.Seek.Forward.Small");
             m_stage = 32;
         }
         else if(m_stage == 32) {
@@ -584,7 +584,7 @@ private:
                 return;
             }
             m_panel->findChild<QSlider*>(u"Headphones.Volume"_s)->setValue(20 + m_stressCycles % 60);
-            trigger("Headphones.PlayPause");
+            trigger("Headphones.Playback.PlayPause");
             m_stage = 33;
         }
         else if(m_stage == 33) {
@@ -596,7 +596,7 @@ private:
             m_stage = 34;
         }
         else if(m_stage == 34 && m_finishWait.elapsed() >= 200) {
-            trigger("Headphones.Stop");
+            trigger("Headphones.Playback.Stop");
             if(!check(status() == u"Stopped", u"Stress stop was not synchronous"_s)) {
                 return;
             }

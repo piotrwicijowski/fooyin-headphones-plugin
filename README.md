@@ -91,13 +91,18 @@ and Vim Motions.
 
 | Action ID | Command |
 | --- | --- |
-| `Headphones.PreviewSelected` | Preview in headphones |
-| `Headphones.PlayPause` | Play/pause headphone preview |
-| `Headphones.Play` | Play headphone preview |
-| `Headphones.Pause` | Pause headphone preview |
-| `Headphones.Stop` | Stop headphone preview |
-| `Headphones.SeekBackward` | Seek headphone preview backward 5 seconds |
-| `Headphones.SeekForward` | Seek headphone preview forward 5 seconds |
+| `Headphones.Tracks.PreviewSelected` | Preview in headphones |
+| `Headphones.Playback.PlayPause` | Play/pause headphone preview |
+| `Headphones.Playback.Play` | Play headphone preview |
+| `Headphones.Playback.Pause` | Pause headphone preview |
+| `Headphones.Playback.Stop` | Stop headphone preview |
+| `Headphones.Seek.Backward.Small` | Seek headphone preview backward (small step) |
+| `Headphones.Seek.Forward.Small` | Seek headphone preview forward (small step) |
+| `Headphones.Seek.Backward.Large` | Seek headphone preview backward (large step) |
+| `Headphones.Seek.Forward.Large` | Seek headphone preview forward (large step) |
+
+Seek actions use the small and large seek increments from fooyin's **Playback →
+General** settings. Changes apply on the next seek.
 
 ### Script variables
 

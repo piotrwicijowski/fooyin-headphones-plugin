@@ -219,7 +219,7 @@ private Q_SLOTS:
             QVERIFY(another != control);
             delete another;
         }
-        auto* command = actions.command("Headphones.PreviewSelected");
+        auto* command = actions.command("Headphones.Tracks.PreviewSelected");
         QVERIFY(command);
         QVERIFY(command->defaultShortcuts().isEmpty());
         auto* volume = controls[2]->findChild<QSlider*>(u"Headphones.Volume"_s);
@@ -264,7 +264,7 @@ private Q_SLOTS:
         for(const auto& id : controlIds) {
             QVERIFY(!widgets->createWidget(id));
         }
-        QVERIFY(!actions.command("Headphones.PreviewSelected"));
+        QVERIFY(!actions.command("Headphones.Tracks.PreviewSelected"));
         QVERIFY(!widgets->createWidget(u"HeadphonesPreview"_s));
         provider.reset();
         widgets.reset();
@@ -385,7 +385,7 @@ private Q_SLOTS:
                 panel->saveLayout(atQuit);
             }
             QCOMPARE(atQuit, beforeQuit);
-            QVERIFY(actions.command("Headphones.PreviewSelected"));
+            QVERIFY(actions.command("Headphones.Tracks.PreviewSelected"));
             saved = true;
             if(hostDestroysWidgets) {
                 layout.reset();
@@ -396,7 +396,7 @@ private Q_SLOTS:
             for(const auto& panel : panels) {
                 QVERIFY(panel.isNull());
             }
-            QVERIFY(!actions.command("Headphones.PreviewSelected"));
+            QVERIFY(!actions.command("Headphones.Tracks.PreviewSelected"));
         });
         QTimer::singleShot(0, qApp, &QCoreApplication::quit);
         QCOMPARE(qApp->exec(), 0);
