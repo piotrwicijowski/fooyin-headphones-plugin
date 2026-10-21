@@ -89,7 +89,7 @@ Alternatively, run `make test FOOYIN_BUILD_DIR=/path/to/fooyin/build`.
 | `headphones.plugin-lifecycle` | Load the real module; verify interfaces, registration, partial/duplicate initialisation, widget persistence, and shutdown ordering. |
 | `headphones.preview-engine` | Transport, cancellation, stale results, replacement, exact segment/seek boundaries, queue bounds, starvation, errors, and output positioning. |
 | `headphones.preview-source` | Public AudioLoader integration, CUE/chapter samples, decoder options, concurrent-decoding rejection, ownership, and worker-thread teardown. |
-| `headphones.preview-converter` | Sample containers and scaling, channel gains, streaming resampling, continuity, tail flushing, reset, and allocation bounds. |
+| `headphones.preview-converter` | Sample containers and scaling, mono/stereo baselines, per-channel impulses for native/permuted multichannel layouts, headroom/LFE policy, mono fallback, integer outputs, streaming resampling, tails, and allocation bounds. |
 | `headphones.preview-replaygain` | Shared configuration, all processing/selection modes, gain/preamp/peak PCM, invalid metadata, session snapshots, muted playback, replacement, and resampled tails. Optional real native-Opus header-gain check. |
 | `headphones.preview-output` | Format negotiation, opaque device IDs, hotplug, sink epochs, pause/drain clocks, backend recovery, and persisted volume/device settings. |
 | `headphones.gui` | Actions and selection targets, volume-step bounds and shared mute restoration, settings/dialog-provider lifetime, hotplug, scrubbing, and widget recreation. |
@@ -150,6 +150,13 @@ python3 tests/run-inprocess-validation.py \
 
 `--seconds 0` runs only the integration workflow; the default is 60 seconds of
 repeated replacement, paused seek bursts, resume, volume, and stop.
+
+Add `--multichannel` to generate explicit-layout WAVE_FORMAT_EXTENSIBLE preview
+fixtures: side 5.1 at 44.1 kHz and standard 7.1 at 96 kHz. The driver verifies the
+real decoder's ordered speaker roles, then exercises these tracks through the
+stereo headphone sink while checking main playback/queue/settings isolation.
+Per-channel routing and audible-sample expectations are covered separately by
+the converter and engine suites.
 
 The runner checks live routing, rejects duplicate/colliding streams, samples
 whole-process CPU/RSS, and retains logs, fixtures, and `report.json` in the printed

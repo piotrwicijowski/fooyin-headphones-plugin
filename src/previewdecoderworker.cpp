@@ -23,6 +23,14 @@ uint64_t framesForMs(uint64_t ms, int rate)
     return (ms / 1000) * r + ((ms % 1000) * r) / 1000;
 }
 
+size_t boundedBytes(uint64_t frames, size_t frameBytes)
+{
+    if(frameBytes == 0 || frames > PreviewMaxBufferBytes / frameBytes) {
+        throw std::runtime_error {"Preview PCM exceeds the bounded buffer capacity"};
+    }
+    return static_cast<size_t>(frames) * frameBytes;
+}
+
 struct SourceLifetime
 {
     std::shared_ptr<PreviewSession> session;
@@ -203,8 +211,8 @@ void PreviewDecoderWorker::decode(const std::shared_ptr<PreviewSession>& session
         return;
     }
     const auto& format = info->format;
-    if(!isPreviewFormat(format)) {
-        m_failed(session->generation, u"Preview requires a valid conventional mono/stereo PCM layout."_s);
+    if(!isPreviewInputFormat(format, &error)) {
+        m_failed(session->generation, error);
         return;
     }
     const auto maxTime = static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
@@ -252,7 +260,7 @@ void PreviewDecoderWorker::decode(const std::shared_ptr<PreviewSession>& session
     const size_t frameBytes       = static_cast<size_t>(format.bytesPerFrame());
     const size_t outputFrameBytes = static_cast<size_t>(outputFormat->bytesPerFrame());
     const size_t capacity
-        = static_cast<size_t>(std::max<uint64_t>(1, framesForMs(500, outputFormat->sampleRate()))) * outputFrameBytes;
+        = boundedBytes(std::max<uint64_t>(1, framesForMs(500, outputFormat->sampleRate())), outputFrameBytes);
     auto queue = std::make_shared<PreviewPcmBuffer>(capacity, outputFrameBytes);
     session->installBuffer(queue);
 
@@ -263,8 +271,7 @@ void PreviewDecoderWorker::decode(const std::shared_ptr<PreviewSession>& session
         remaining = framesForMs(session->track.offset() + duration, format.sampleRate())
                   - framesForMs(session->track.offset() + std::min(duration, positionMs), format.sampleRate());
     }
-    constexpr size_t ReadFrames = 4096;
-    const size_t requestBytes   = ReadFrames * frameBytes;
+    const size_t requestBytes   = boundedBytes(PreviewBlockFrames, frameBytes);
     auto starvedSince           = std::chrono::steady_clock::now();
     while(!session->cancelled.load() && remaining > 0) {
         auto result = source.read(requestBytes);

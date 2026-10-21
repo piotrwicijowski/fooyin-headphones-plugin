@@ -30,6 +30,14 @@ private Q_SLOTS:
         device = fakeDevice("headphones", {{SampleFormat::F32, 48000, 6}});
         QVERIFY(!negotiatePreviewFormat(device, input));
         QVERIFY(!negotiatePreviewFormat(device, {SampleFormat::F32, 48000, 6}));
+        const AudioFormat surround {SampleFormat::S24In32, 96000, 6};
+        device = fakeDevice("headphones", {{SampleFormat::S16, 48000, 2}});
+        QCOMPARE(negotiatePreviewFormat(device, surround), std::optional<AudioFormat>({SampleFormat::S16, 48000, 2}));
+        device = fakeDevice("headphones", {{SampleFormat::S32, 44100, 1}});
+        QCOMPARE(negotiatePreviewFormat(device, surround), std::optional<AudioFormat>({SampleFormat::S32, 44100, 1}));
+        auto unknown = surround;
+        unknown.clearChannelLayout();
+        QVERIFY(!negotiatePreviewFormat(device, unknown));
     }
 
     void explicitIdsAndOpenTimeResolution()

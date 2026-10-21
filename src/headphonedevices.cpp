@@ -94,7 +94,7 @@ QByteArray decodeDeviceId(const QString& encoded)
 
 std::optional<AudioFormat> negotiatePreviewFormat(const HeadphoneDevice& device, const AudioFormat& input)
 {
-    if(device.id.isEmpty() || !device.supportsFormat || !isPreviewFormat(input)) {
+    if(device.id.isEmpty() || !device.supportsFormat || !isPreviewInputFormat(input)) {
         return {};
     }
     for(const int channels : {2, 1}) {
@@ -108,10 +108,7 @@ std::optional<AudioFormat> negotiatePreviewFormat(const HeadphoneDevice& device,
             }
         }
         for(const auto& candidate : candidates) {
-            const auto sample = candidate.sampleFormat();
-            if(isPreviewFormat(candidate)
-               && (sample == SampleFormat::F32 || sample == SampleFormat::S16 || sample == SampleFormat::S32)
-               && device.supportsFormat(candidate)) {
+            if(isPreviewOutputFormat(candidate) && device.supportsFormat(candidate)) {
                 return candidate;
             }
         }

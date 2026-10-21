@@ -28,7 +28,22 @@ def fixture(path, rate, channels, seconds, frequency, floating=False):
     if sys.byteorder != "little":
         samples.byteswap()
     block = samples.tobytes()
-    if floating:
+    if channels > 2:
+        # WAVE_FORMAT_EXTENSIBLE identifies speaker roles, rather than leaving
+        # the decoder to guess from channel count. Use side 5.1 and standard 7.1.
+        mask = {6: 0x60F, 8: 0x63F}[channels]
+        size = len(block) * seconds
+        bits = 32 if floating else 16
+        align = channels * bits // 8
+        subtype = struct.pack("<IHH8s", 3 if floating else 1, 0, 0x10, b"\x80\x00\x00\xaa\x00\x38\x9b\x71")
+        fmt = struct.pack("<HHIIHHHHI16s", 0xFFFE, channels, rate, rate * align, align, bits, 22, bits, mask, subtype)
+        with path.open("wb") as output:
+            output.write(struct.pack("<4sI4s4sI", b"RIFF", size + 60, b"WAVE", b"fmt ", len(fmt)))
+            output.write(fmt)
+            output.write(struct.pack("<4sI", b"data", size))
+            for _ in range(seconds):
+                output.write(block)
+    elif floating:
         size = len(block) * seconds
         with path.open("wb") as output:
             output.write(struct.pack("<4sI4s4sIHHIIHH4sI", b"RIFF", size + 36, b"WAVE", b"fmt ",
@@ -59,6 +74,8 @@ def main():
     parser.add_argument("--seconds", type=int, default=60, help="Stress duration, 0..3600 (default: 60)")
     parser.add_argument("--change-default", action="store_true",
                         help="Also test server default-device changes (fails if the server reroutes streams)")
+    parser.add_argument("--multichannel", action="store_true",
+                        help="Preview explicit-layout 5.1/7.1 WAV files through the stereo sink")
     parser.add_argument("--artifacts", type=Path, help="New directory for fixtures, logs and report")
     parser.add_argument("--pulseaudio", default=shutil.which("pulseaudio"))
     parser.add_argument("--pactl", default=shutil.which("pactl"))
@@ -105,14 +122,15 @@ def validate(args, root, runtime, plugins):
     env["FOOYIN_PLUGIN_PATH"] = os.pathsep.join(plugins)
     env["HEADPHONES_INPROCESS_TEST"] = "1"
     env["HEADPHONES_TEST_STRESS_SECONDS"] = str(args.seconds)
+    env["HEADPHONES_TEST_MULTICHANNEL"] = "1" if args.multichannel else "0"
     for name in ("main", "headphones"):
         key = "HEADPHONES_TEST_MAIN_ID" if name == "main" else "HEADPHONES_TEST_ID"
         env[key] = base64.b64encode(name.encode()).decode()
     seconds = args.seconds + 30
     for name, rate, channels, frequency, floating in (
         ("main", 48000, 2, 220, True),
-        ("preview", 44100, 1, 440, False),
-        ("other", 96000, 2, 880, False),
+        ("preview", 44100, 6 if args.multichannel else 1, 440, False),
+        ("other", 96000, 8 if args.multichannel else 2, 880, False),
     ):
         path = root / f"{name}.wav"
         fixture(path, rate, channels, seconds if name == "main" else 20, frequency, floating)
@@ -134,7 +152,7 @@ def validate(args, root, runtime, plugins):
                                        stderr=subprocess.PIPE, timeout=5)
 
     server = host = None
-    report = {"stress_seconds": args.seconds,
+    report = {"stress_seconds": args.seconds, "multichannel": args.multichannel,
               "routing_samples": 0, "default_changed": False, "rss_kib": [],
               "observed_formats": {}, "passed": False}
     try:

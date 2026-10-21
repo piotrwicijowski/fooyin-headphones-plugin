@@ -413,6 +413,27 @@ private:
                       u"Fixture metadata could not be read"_s)) {
                 return;
             }
+            if(qEnvironmentVariableIntValue("HEADPHONES_TEST_MULTICHANNEL") == 1) {
+                using P = AudioFormat::ChannelPosition;
+                for(const auto& track : {m_preview, m_other}) {
+                    auto decoded = m_loader->loadDecoderForTrack(track, AudioDecoder::NoLooping);
+                    const AudioFormat::ChannelLayout expected
+                        = track.filepath() == m_preview.filepath()
+                            ? AudioFormat::ChannelLayout {P::FrontLeft, P::FrontRight, P::FrontCenter,
+                                                          P::LFE,       P::SideLeft,   P::SideRight}
+                            : AudioFormat::ChannelLayout {P::FrontLeft, P::FrontRight, P::FrontCenter, P::LFE,
+                                                          P::BackLeft,  P::BackRight,  P::SideLeft,    P::SideRight};
+                    const bool valid = decoded.decoder && decoded.format && decoded.format->channelLayout() == expected;
+                    if(decoded.decoder) {
+                        decoded.decoder->stop();
+                    }
+                    if(!check(valid, u"Real decoder did not preserve the multichannel fixture's explicit layout"_s)) {
+                        return;
+                    }
+                    qInfo() << "HEADPHONES MULTICHANNEL FIXTURE:" << decoded.name
+                            << decoded.format->prettyChannelLayout();
+                }
+            }
             if(!check(m_main.duration() >= static_cast<uint64_t>(m_stressSeconds + 20) * 1000
                           && m_preview.duration() >= 20000 && m_other.duration() >= 20000,
                       u"Fixtures too short for validation duration"_s)) {

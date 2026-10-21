@@ -19,6 +19,8 @@ track or changing the queue, volume, or output settings.
   each preview, default 0s.
 - **ReplayGain:** previews reuse fooyin's main ReplayGain configuration, including
   gain selection, preamps, and peak-based clipping prevention.
+- **Multichannel downmix:** audition supported 3.0, quad, 5.0, 5.1, and 7.1 tracks
+  through stereo headphones using the decoder's speaker layout.
 - **Script variables:** display preview metadata, playback state, and a headphone
   indicator in playlist columns.
 
@@ -117,6 +119,17 @@ settings are saved, but playback never starts automatically.
 There are no headphone-specific ReplayGain settings. The plugin reuses the
 processing mode, Track/Album/playback-order selection, and both preamps
 configured through fooyin's **Playback → ReplayGain** settings.
+
+### Multichannel tracks
+
+Downmixing is automatic for supported layouts with identified speaker roles:
+
+- **3.0:** front left/right and centre.
+- **Quad:** front left/right plus a rear or side surround pair.
+- **5.0 / 5.1:** front left/right, centre, a rear or side surround pair, and
+  optionally LFE.
+- **7.1:** front left/right, centre, LFE, and both rear and side surround pairs.
+  Wide variants replace either surround pair with front-left/right-of-centre.
 
 ## Layout widgets
 

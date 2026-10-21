@@ -61,6 +61,9 @@ struct SourcePlan
     bool readFails {false};
     bool malformed {false};
     bool changedFormat {false};
+    bool changedLayout {false};
+    bool partialFrame {false};
+    bool oversized {false};
     int starveReads {0}; // -1 means persistent starvation.
     std::shared_ptr<Gate> openGate;
     std::shared_ptr<Gate> readGate;
@@ -154,6 +157,11 @@ public:
         if(m_plan->changedFormat) {
             format.setSampleRate(format.sampleRate() + 1);
         }
+        if(m_plan->changedLayout) {
+            auto layout = format.channelLayout();
+            std::swap(layout[0], layout[1]);
+            format.setChannelLayout(layout);
+        }
         const auto frames
             = std::min({static_cast<uint64_t>(m_plan->blockFrames),
                         static_cast<uint64_t>(maxBytes / format.bytesPerFrame()), m_plan->totalFrames - m_frame});
@@ -167,6 +175,12 @@ public:
             }
         }
         m_frame += frames;
+        if(m_plan->partialFrame) {
+            buffer.resize(buffer.byteCount() - 1);
+        }
+        if(m_plan->oversized) {
+            buffer.resize(maxBytes + format.bytesPerFrame());
+        }
         return AudioDecoder::ReadResult::data(std::move(buffer));
     }
 

@@ -3,6 +3,7 @@
 
 #include <core/engine/audiobuffer.h>
 
+#include <array>
 #include <optional>
 
 struct SwrContext;
@@ -28,11 +29,16 @@ private:
     AudioFormat m_input;
     AudioFormat m_output;
     SwrContext* m_context {nullptr};
+    std::array<int, 8> m_channelMap {}; // libswresample borrows this mapping for the context lifetime.
     double m_linearGain {1.0};
     bool m_passthrough {false};
     bool m_finished {false};
 };
 
-[[nodiscard]] bool isPreviewFormat(const AudioFormat& format);
+inline constexpr size_t PreviewBlockFrames    = 4096;
+inline constexpr size_t PreviewMaxBufferBytes = 8 * 1024 * 1024;
+
+[[nodiscard]] bool isPreviewInputFormat(const AudioFormat& format, QString* error = nullptr);
+[[nodiscard]] bool isPreviewOutputFormat(const AudioFormat& format);
 
 } // namespace Fooyin::Headphones

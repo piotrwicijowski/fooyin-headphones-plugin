@@ -496,8 +496,9 @@ private Q_SLOTS:
     void sourceErrors_data()
     {
         QTest::addColumn<QString>("kind");
-        for(const auto& kind : {"open", "read", "malformed", "changed-format", "multichannel", "layout", "seek",
-                                "overflow", "starvation"}) {
+        for(const auto& kind :
+            {"open", "read", "malformed", "changed-format", "multichannel", "layout", "seek", "overflow", "starvation",
+             "changed-layout", "partial-frame", "oversized", "too-many-channels"}) {
             QTest::newRow(kind) << QString::fromLatin1(kind);
         }
     }
@@ -514,6 +515,17 @@ private Q_SLOTS:
         plan->seekFails     = kind == u"seek";
         if(kind == u"multichannel") {
             plan->format.setChannelCount(6);
+            plan->format.clearChannelLayout();
+        }
+        if(kind == u"too-many-channels") {
+            plan->format.setChannelCount(32);
+        }
+        if(kind == u"changed-layout" || kind == u"partial-frame" || kind == u"oversized") {
+            plan->format.setChannelCount(8);
+            plan->changedLayout        = kind == u"changed-layout";
+            plan->partialFrame         = kind == u"partial-frame";
+            plan->oversized            = kind == u"oversized";
+            h.output->negotiatedFormat = AudioFormat {SampleFormat::F32, 48000, 2};
         }
         if(kind == u"layout") {
             plan->format.setChannelLayout({AudioFormat::ChannelPosition::LFE});
@@ -614,18 +626,26 @@ private Q_SLOTS:
     void convertedReplacementAndSeekIsolation_data()
     {
         QTest::addColumn<int>("rate");
-        QTest::newRow("44100-to-48000") << 44100;
-        QTest::newRow("96000-to-48000") << 96000;
+        QTest::addColumn<int>("channels");
+        for(int rate : {44100, 96000}) {
+            for(int channels : {1, 6, 8}) {
+                QTest::newRow(qPrintable(QStringLiteral("%1-to-48000-%2ch").arg(rate).arg(channels)))
+                    << rate << channels;
+            }
+        }
     }
 
     void convertedReplacementAndSeekIsolation()
     {
         QFETCH(int, rate);
+        QFETCH(int, channels);
         PreviewHarness h;
         auto old = h.add(u"old-converted.wav"_s);
         old->format.setSampleRate(rate);
+        old->format.setChannelCount(channels);
         auto next = h.add(u"next-converted.wav"_s);
         next->format.setSampleRate(rate);
+        next->format.setChannelCount(channels);
         next->base                 = 10000;
         h.output->negotiatedFormat = AudioFormat {SampleFormat::F32, 48000, 2};
         h.output->maxWrite         = 3; // Leave both a partial output frame and pending PCM.
@@ -686,6 +706,7 @@ private Q_SLOTS:
         PreviewHarness h;
         auto plan = h.add(u"long.wav"_s);
         plan->format.setSampleRate(96000);
+        plan->format.setChannelCount(8);
         plan->totalFrames = frames;
         plan->blockFrames = 4096;
         auto session      = std::make_shared<PreviewSession>(1, Track {u"long.wav"_s}, 0);

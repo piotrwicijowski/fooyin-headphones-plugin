@@ -3,6 +3,7 @@
 
 #include <QTest>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <numbers>
@@ -29,6 +30,152 @@ class PreviewConverterTest : public QObject
 {
     Q_OBJECT
 private Q_SLOTS:
+    void multichannelRouting_data()
+    {
+        using P      = AudioFormat::ChannelPosition;
+        using Layout = AudioFormat::ChannelLayout;
+        QTest::addColumn<AudioFormat>("input");
+        QTest::addColumn<std::vector<double>>("left");
+        QTest::addColumn<std::vector<double>>("right");
+        const double c = 1.0 / std::sqrt(2.0);
+        const auto row = [&](const char* name, Layout layout, std::vector<double> left, std::vector<double> right,
+                             double divisor) {
+            for(auto& value : left) {
+                value /= divisor;
+            }
+            for(auto& value : right) {
+                value /= divisor;
+            }
+            for(bool reordered : {false, true}) {
+                if(reordered) {
+                    std::reverse(layout.begin(), layout.end());
+                    std::reverse(left.begin(), left.end());
+                    std::reverse(right.begin(), right.end());
+                    std::rotate(layout.begin(), layout.begin() + 1, layout.end());
+                    std::rotate(left.begin(), left.begin() + 1, left.end());
+                    std::rotate(right.begin(), right.begin() + 1, right.end());
+                }
+                AudioFormat format {SampleFormat::F32, 48000, static_cast<int>(layout.size())};
+                QVERIFY(format.setChannelLayout(layout));
+                const auto label = QByteArray {name} + (reordered ? "-permuted" : "-native");
+                QTest::newRow(label) << format << left << right;
+            }
+        };
+        row("3.0", {P::FrontLeft, P::FrontRight, P::FrontCenter}, {1, 0, c}, {0, 1, c}, 1 + c);
+        row("quad-back", {P::FrontLeft, P::FrontRight, P::BackLeft, P::BackRight}, {1, 0, c, 0}, {0, 1, 0, c}, 1 + c);
+        row("quad-side", {P::FrontLeft, P::FrontRight, P::SideLeft, P::SideRight}, {1, 0, c, 0}, {0, 1, 0, c}, 1 + c);
+        row("5.0-back", {P::FrontLeft, P::FrontRight, P::FrontCenter, P::BackLeft, P::BackRight}, {1, 0, c, c, 0},
+            {0, 1, c, 0, c}, 1 + 2 * c);
+        row("5.0-side", {P::FrontLeft, P::FrontRight, P::FrontCenter, P::SideLeft, P::SideRight}, {1, 0, c, c, 0},
+            {0, 1, c, 0, c}, 1 + 2 * c);
+        row("5.1-back", {P::FrontLeft, P::FrontRight, P::FrontCenter, P::LFE, P::BackLeft, P::BackRight},
+            {1, 0, c, 0, c, 0}, {0, 1, c, 0, 0, c}, 1 + 2 * c);
+        row("5.1-side", {P::FrontLeft, P::FrontRight, P::FrontCenter, P::LFE, P::SideLeft, P::SideRight},
+            {1, 0, c, 0, c, 0}, {0, 1, c, 0, 0, c}, 1 + 2 * c);
+        row("7.1",
+            {P::FrontLeft, P::FrontRight, P::FrontCenter, P::LFE, P::BackLeft, P::BackRight, P::SideLeft, P::SideRight},
+            {1, 0, c, 0, c, 0, c, 0}, {0, 1, c, 0, 0, c, 0, c}, 1 + 3 * c);
+        row("7.1-wide-side",
+            {P::FrontLeft, P::FrontRight, P::FrontCenter, P::LFE, P::FrontLeftOfCenter, P::FrontRightOfCenter,
+             P::SideLeft, P::SideRight},
+            {1, 0, c, 0, c, 0, c, 0}, {0, 1, c, 0, 0, c, 0, c}, 1 + 3 * c);
+        row("7.1-wide-back",
+            {P::FrontLeft, P::FrontRight, P::FrontCenter, P::LFE, P::BackLeft, P::BackRight, P::FrontLeftOfCenter,
+             P::FrontRightOfCenter},
+            {1, 0, c, 0, c, 0, c, 0}, {0, 1, c, 0, 0, c, 0, c}, 1 + 3 * c);
+    }
+
+    void multichannelRouting()
+    {
+        QFETCH(AudioFormat, input);
+        QFETCH(std::vector<double>, left);
+        QFETCH(std::vector<double>, right);
+        const auto count = static_cast<size_t>(input.channelCount());
+        // One isolated impulse per input lane, followed by correlated +/- full
+        // scale. Integer normalisation must retain a non-native source layout.
+        std::vector<float> signal((count + 2) * count, 0.0F);
+        for(size_t i = 0; i < count; ++i) {
+            signal[i * count + i] = 0.5F;
+        }
+        std::fill_n(signal.begin() + count * count, count, 0.5F);
+        std::fill_n(signal.begin() + (count + 1) * count, count, -0.5F);
+        for(const auto sample : {SampleFormat::F32, SampleFormat::S16}) {
+            input.setSampleFormat(sample);
+            std::vector<int16_t> integer(signal.size());
+            std::ranges::transform(signal, integer.begin(),
+                                   [](float value) { return static_cast<int16_t>(value * 32768); });
+            const auto buffer = sample == SampleFormat::F32 ? samples(signal, input) : samples(integer, input);
+            for(int channels : {2, 1}) {
+                PreviewConverter converter;
+                QString error;
+                QVERIFY2(converter.configure(input, {SampleFormat::F32, 48000, channels}, error, 2.0),
+                         qPrintable(error));
+                auto output = converter.convert(buffer, error);
+                QVERIFY2(output.has_value(), qPrintable(error));
+                QCOMPARE(output->size(), (count + 2) * channels * sizeof(float));
+                for(size_t i = 0; i < count; ++i) {
+                    if(channels == 2) {
+                        QVERIFY(std::abs(floatAt(*output, i * 2) - left[i]) < 0.000001);
+                        QVERIFY(std::abs(floatAt(*output, i * 2 + 1) - right[i]) < 0.000001);
+                    }
+                    else {
+                        QVERIFY(std::abs(floatAt(*output, i) - (left[i] + right[i]) / 2) < 0.000001);
+                    }
+                }
+                for(int side = 0; side < channels; ++side) {
+                    const auto positive = floatAt(*output, count * channels + side);
+                    const auto negative = floatAt(*output, (count + 1) * channels + side);
+                    QVERIFY(std::abs(positive - 1.0F) < 0.000001F);
+                    QVERIFY(std::abs(negative + 1.0F) < 0.000001F);
+                    QVERIFY(std::abs(positive) <= 1.000001F && std::abs(negative) <= 1.000001F);
+                }
+                QVERIFY(converter.finish(error)->empty());
+            }
+        }
+    }
+
+    void rejectsUnknownAndUnsupportedLayouts()
+    {
+        using P = AudioFormat::ChannelPosition;
+        std::vector<AudioFormat> formats {{SampleFormat::F32, 48000, 7},
+                                          {SampleFormat::F32, 48000, 32},
+                                          {SampleFormat::F32, 48000, 33},
+                                          {SampleFormat::F32, 768001, 6}};
+        AudioFormat missing {SampleFormat::F32, 48000, 6};
+        missing.clearChannelLayout();
+        formats.push_back(missing);
+        for(const auto& layout : std::vector<AudioFormat::ChannelLayout> {
+                {P::FrontLeft, P::FrontRight, P::FrontCenter, P::LFE, P::SideLeft, P::SideLeft},
+                {P::FrontLeft, P::FrontRight, P::FrontCenter, P::LFE, P::SideLeft, P::UnknownPosition},
+                {P::FrontLeft, P::FrontRight, P::FrontCenter, P::LFE, P::TopFrontLeft, P::TopFrontRight},
+                {P::FrontLeft, P::FrontRight, P::FrontCenter, P::LFE, P::BackCenter, P::SideRight}}) {
+            AudioFormat format {SampleFormat::F32, 48000, 6};
+            QVERIFY(format.setChannelLayout(layout));
+            formats.push_back(format);
+        }
+        for(const auto& format : formats) {
+            PreviewConverter converter;
+            QString error;
+            QVERIFY(!converter.configure(format, {SampleFormat::F32, 48000, 2}, error));
+            QVERIFY(!error.isEmpty());
+            QVERIFY(!converter.finish(error));
+        }
+        PreviewConverter converter;
+        QString error;
+        AudioFormat input {SampleFormat::F32, 48000, 6};
+        QVERIFY(converter.configure(input, {SampleFormat::F32, 48000, 2}, error));
+        auto changed = input.channelLayout();
+        std::swap(changed[0], changed[1]);
+        QVERIFY(input.setChannelLayout(changed));
+        QVERIFY(!converter.convert(samples<float>(std::vector<float>(6), input), error));
+        input = {SampleFormat::F32, 48000, 6};
+        AudioBuffer malformed {input, 0};
+        malformed.resize(25);
+        QVERIFY(!converter.convert(malformed, error));
+        QVERIFY(!converter.convert(samples<float>(std::vector<float>(4097 * 6), input), error));
+        QVERIFY(!converter.configure(input, input, error)); // Outputs remain mono/stereo.
+    }
+
     void normalisesSampleContainers_data()
     {
         QTest::addColumn<int>("sample");
@@ -128,26 +275,49 @@ private Q_SLOTS:
     {
         QTest::addColumn<int>("inputRate");
         QTest::addColumn<int>("outputRate");
-        QTest::newRow("44100-to-48000") << 44100 << 48000;
-        QTest::newRow("96000-to-48000") << 96000 << 48000;
-        QTest::newRow("48000-to-44100") << 48000 << 44100;
+        QTest::addColumn<int>("inputChannels");
+        QTest::addColumn<int>("outputChannels");
+        QTest::addColumn<int>("outputSample");
+        for(const auto rates : {std::pair {44100, 48000}, std::pair {96000, 48000}, std::pair {48000, 44100}}) {
+            for(int input : {1, 6, 8}) {
+                for(int output : {1, 2}) {
+                    for(auto sample : {SampleFormat::F32, SampleFormat::S16, SampleFormat::S32}) {
+                        const auto label = QStringLiteral("%1-to-%2-%3ch-to-%4ch-%5")
+                                               .arg(rates.first)
+                                               .arg(rates.second)
+                                               .arg(input)
+                                               .arg(output)
+                                               .arg(static_cast<int>(sample));
+                        QTest::newRow(qPrintable(label))
+                            << rates.first << rates.second << input << output << static_cast<int>(sample);
+                    }
+                }
+            }
+        }
     }
 
     void streamingRateChanges()
     {
         QFETCH(int, inputRate);
         QFETCH(int, outputRate);
-        const AudioFormat input {SampleFormat::F32, inputRate, 1};
+        QFETCH(int, inputChannels);
+        QFETCH(int, outputChannels);
+        QFETCH(int, outputSample);
+        const AudioFormat input {SampleFormat::F32, inputRate, inputChannels};
+        const auto sample = static_cast<SampleFormat>(outputSample);
+        const AudioFormat output {sample, outputRate, outputChannels};
         PreviewConverter converter;
         QString error;
-        QVERIFY(converter.configure(input, {SampleFormat::F32, outputRate, 1}, error));
+        QVERIFY(converter.configure(input, output, error));
         std::vector<std::byte> result;
         const size_t inputFrames = inputRate / 10;
         for(size_t start = 0; start < inputFrames;) {
             const auto count = std::min<size_t>(211, inputFrames - start);
-            std::vector<float> signal(count);
+            std::vector<float> signal(count * inputChannels);
             for(size_t i = 0; i < count; ++i) {
-                signal[i] = static_cast<float>(0.25 * std::sin(2 * std::numbers::pi * 1000 * (start + i) / inputRate));
+                const auto value
+                    = static_cast<float>(0.25 * std::sin(2 * std::numbers::pi * 1000 * (start + i) / inputRate));
+                std::fill_n(signal.begin() + i * inputChannels, inputChannels, value);
             }
             auto block = converter.convert(samples(signal, input), error);
             QVERIFY2(block.has_value(), qPrintable(error));
@@ -162,12 +332,29 @@ private Q_SLOTS:
         result.insert(result.end(), tail->begin(), tail->end());
         QVERIFY(result.size() > beforeTail);
         QVERIFY(converter.finish(error)->empty());
-        const auto frames = result.size() / sizeof(float);
+        const auto frames = result.size() / output.bytesPerFrame();
         QVERIFY(std::abs(static_cast<int>(frames) - outputRate / 10) <= 1);
         // Verify pitch, gain and continuity across the many input block boundaries.
         for(size_t i = 128; i + 128 < frames; ++i) {
             const auto expected = 0.25 * std::sin(2 * std::numbers::pi * 1000 * i / outputRate);
-            QVERIFY(std::abs(floatAt(result, i) - expected) < 0.005);
+            for(int channel = 0; channel < outputChannels; ++channel) {
+                const auto index = i * outputChannels + channel;
+                double actual;
+                if(sample == SampleFormat::F32) {
+                    actual = floatAt(result, index);
+                }
+                else if(sample == SampleFormat::S16) {
+                    int16_t value;
+                    std::memcpy(&value, result.data() + index * sizeof(value), sizeof(value));
+                    actual = value / 32768.0;
+                }
+                else {
+                    int32_t value;
+                    std::memcpy(&value, result.data() + index * sizeof(value), sizeof(value));
+                    actual = value / 2147483648.0;
+                }
+                QVERIFY(std::abs(actual - expected) < 0.005);
+            }
         }
     }
 
@@ -192,7 +379,9 @@ private Q_SLOTS:
         QVERIFY(!converter.convert(samples<float>({0.0F}, input), error));
         QVERIFY(converter.configure(input, output, error));
         QVERIFY(!converter.convert(samples<float>(std::vector<float>(4097), input), error));
-        QVERIFY(!converter.configure({SampleFormat::F32, 48000, 6}, output, error));
+        auto missingLayout = AudioFormat {SampleFormat::F32, 48000, 6};
+        missingLayout.clearChannelLayout();
+        QVERIFY(!converter.configure(missingLayout, output, error));
         QVERIFY(!converter.configure(input, {SampleFormat::U8, 48000, 1}, error));
         if(converter.configure({SampleFormat::F32, 1, 1}, {SampleFormat::F32, 768000, 2}, error)) {
             QVERIFY(!converter.convert(samples<float>(std::vector<float>(4096), {SampleFormat::F32, 1, 1}), error));
