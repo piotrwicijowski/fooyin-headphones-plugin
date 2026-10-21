@@ -21,9 +21,12 @@ public:
     explicit HeadphonesSettings(SettingsManager* settings, QObject* parent = nullptr);
     [[nodiscard]] QByteArray deviceId() const;
     [[nodiscard]] QString deviceDescription() const;
+    // 0 = automatic, positive odd values = 1-based left channel; -1 = invalid saved route.
+    [[nodiscard]] int outputChannelPair() const;
     [[nodiscard]] double volume() const;
     [[nodiscard]] int previewStartOffsetSeconds() const;
     void setDevice(const QByteArray& id, const QString& description);
+    void setDestination(const QByteArray& id, const QString& description, int firstChannel);
     void setVolume(double uiVolume);
     void setPreviewStartOffsetSeconds(int seconds);
 
@@ -33,7 +36,11 @@ Q_SIGNALS:
     void previewStartOffsetChanged();
 
 private:
+    void refreshDestination();
     SettingsManager* m_settings;
+    QByteArray m_lastDeviceId;
+    int m_lastChannelPair {0};
+    bool m_updatingDestination {false};
 };
 
 } // namespace Fooyin::Headphones

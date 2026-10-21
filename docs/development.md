@@ -243,6 +243,51 @@ change diagnostic.
 Software sinks do not establish audible quality, hardware latency, or physical
 disconnect isolation.
 
+### Output channel-pair validation
+
+The opt-in `channelpairprobe` uses the real device catalogue, `QtAudioOutput`,
+`QAudioSink`, and streaming converter. Its private PulseAudio runner captures a
+quad null sink's monitor and verifies channels 1/2 alone, channels 3/4 alone, and
+two simultaneous streams on those separate pairs. Distinct 220/330 and 440/660 Hz
+tones identify individual channels. Unselected capture lanes must be exactly
+zero; spectral checks reject cross-channel mixing during concurrent output.
+The probe also pauses/resumes and replaces the preview sink while its concurrent
+main-like stream continues. It does not use fooyin's main player or change its
+output settings.
+
+```sh
+python3 tests/run-channel-pair-validation.py \
+  --probe build-test-agent/tests/channelpairprobe
+```
+
+This requires `pulseaudio`, `pactl`, and `parec` from PulseAudio/PulseAudio Utils.
+For staged dependencies, pass `--pulseaudio`, `--pactl`, `--parec`, and
+`--pulse-module-dir`, with the required `LD_LIBRARY_PATH`.
+`--artifacts /path/to/new-directory` retains raw four-channel Float captures,
+probe/server logs, and `report.json` at a chosen location. No desktop audio server
+or physical device is used.
+
+The verified software setup is Qt 6.8.2's PulseAudio backend with PulseAudio 17.0,
+48 kHz quad `front-left,front-right,rear-left,rear-right`, converting preview
+stereo from 44.1 kHz. The public APIs used (`channelConfiguration`, `channelConfig`,
+`channelOffset`, and explicit-device sink construction) are present in Qt 6.4;
+a Qt 6.4 runtime has not been tested. Sink creation alone is not routing evidence:
+the monitor capture establishes the delivered software mapping.
+
+The real catalogue offers pairs only for an endpoint's reported known configuration,
+with a concrete supported preferred-rate/sample-format candidate. It does not
+derive a surround configuration from maximum channel count. Unknown/AUX positions,
+permuted layouts that Qt's mask cannot preserve, and layouts wider than eight
+channels are excluded. Concrete format support and selected pair membership are
+checked again on configuration, sink open, and catalogue changes.
+
+For physical validation, configure the interface's exposed multichannel profile,
+set fooyin's main pair separately (e.g. 1/2), and select the preview pair (e.g. 3/4).
+Confirm the actual connectors with independently identifiable main/preview audio,
+then exercise pause, seek, replacement, stop, and disconnect. PipeWire Pro Audio
+profiles using AUX channel maps, hardware connector numbering, and concurrent
+fooyin main/preview output on a physical shared interface remain unverified.
+
 ### Manual integration-driver launch
 
 Use a fresh isolated fooyin configuration, two explicit Qt output IDs, and three
@@ -298,6 +343,11 @@ and logging overrides, using `--skip-single`.
 - Output uses an explicit-device QAudioSink. Negotiation tests concrete Float,
   Int16, and Int32 formats, preferring stereo Float at the source rate, then
   supported preferred and 44.1/48 kHz candidates, with mono fallback.
+  Explicit pair mode instead requires a concrete known-layout physical format;
+  it never falls back to automatic routing. The converter first produces logical
+  stereo, then copies left/right into the selected physical slots with every
+  other slot zero. Queue capacities, frame alignment, writes, and output clocks
+  use physical frame sizes, including conversion tails.
 - Input is normalised with fooyin's public float conversion helper. libswresample
   handles streaming rate/sample-format conversion, with explicit mono duplication
   and stereo averaging. ReplayGain is applied to float PCM before mixing,
@@ -343,6 +393,13 @@ and logging overrides, using `--skip-single`.
 `Headphones/DeviceDescription` is display text only. Empty, malformed, or unmatched
 IDs are unavailable. The ID is resolved during configuration and before sink
 creation, with no default-device fallback.
+
+`Headphones/OutputRoute` stores an empty map for Automatic (also the migration
+default), or a map containing the Base64 `DeviceId` and 1-based odd `FirstChannel`.
+Device and route changes publish one complete destination notification. Invalid
+routes or routes bound to another device are unavailable, never automatic.
+Changing devices through the legacy device-only setter resets routing to
+Automatic; complete dropdown destinations always specify their own pair/mode.
 
 `Headphones/Volume` is a normalised UI value in `[0, 1]`, default `0.25`.
 Qt's logarithmic-to-linear conversion is applied before `QAudioSink::setVolume()`.

@@ -17,7 +17,7 @@ struct PreviewSession
     PreviewSession(uint64_t generation_, Track track_, uint64_t position_, bool initialStart_ = false,
                    PreviewReplayGain replayGain_ = {});
     void cancel();
-    void approve(const AudioFormat& outputFormat);
+    void approve(const AudioFormat& outputFormat, int firstChannel = 0);
     std::optional<AudioFormat> waitForApproval();
     void installBuffer(std::shared_ptr<PreviewPcmBuffer> buffer);
     [[nodiscard]] std::shared_ptr<PreviewPcmBuffer> buffer() const;
@@ -33,6 +33,7 @@ struct PreviewSession
     mutable std::mutex mutex;
     std::condition_variable changed;
     std::optional<AudioFormat> outputFormat;
+    int firstOutputChannel {0}; // Published under mutex along with outputFormat.
     std::shared_ptr<PreviewPcmBuffer> pcm;
 };
 

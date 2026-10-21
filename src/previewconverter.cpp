@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "previewconverter.h"
 
+#include "headphonedevices.h"
+
 #include <core/engine/audioconverter.h>
 
 extern "C" {
@@ -192,16 +194,27 @@ PreviewConverter::~PreviewConverter()
 void PreviewConverter::reset()
 {
     swr_free(&m_context);
-    m_input       = {};
-    m_output      = {};
-    m_passthrough = false;
-    m_finished    = false;
-    m_linearGain  = 1.0;
+    m_input          = {};
+    m_output         = {};
+    m_physicalOutput = {};
+    m_firstChannel   = 0;
+    m_passthrough    = false;
+    m_finished       = false;
+    m_linearGain     = 1.0;
 }
 
-bool PreviewConverter::configure(const AudioFormat& input, const AudioFormat& output, QString& error, double linearGain)
+bool PreviewConverter::configure(const AudioFormat& input, const AudioFormat& physicalOutput, QString& error,
+                                 double linearGain, int firstChannel)
 {
     reset();
+    auto output = physicalOutput;
+    if(firstChannel != 0) {
+        if(!isExplicitPairFormat(physicalOutput, firstChannel)) {
+            error = u"The selected headphone channel pair or output layout is unavailable."_s;
+            return false;
+        }
+        output = AudioFormat {physicalOutput.sampleFormat(), physicalOutput.sampleRate(), 2};
+    }
     if(!isPreviewInputFormat(input, &error)) {
         return false;
     }
@@ -210,10 +223,12 @@ bool PreviewConverter::configure(const AudioFormat& input, const AudioFormat& ou
         error = u"Unsupported preview conversion format or channel layout."_s;
         return false;
     }
-    m_input       = input;
-    m_output      = output;
-    m_linearGain  = linearGain;
-    m_passthrough = input == output && linearGain == 1.0;
+    m_input          = input;
+    m_output         = output;
+    m_physicalOutput = physicalOutput;
+    m_firstChannel   = firstChannel;
+    m_linearGain     = linearGain;
+    m_passthrough    = input == output && linearGain == 1.0;
     if(m_passthrough) {
         return true;
     }
@@ -269,7 +284,7 @@ std::optional<std::vector<std::byte>> PreviewConverter::convert(const AudioBuffe
         return {};
     }
     if(m_passthrough) {
-        return std::vector<std::byte> {input.constData().begin(), input.constData().end()};
+        return route(std::vector<std::byte> {input.constData().begin(), input.constData().end()}, error);
     }
     auto floatFormat = m_input;
     floatFormat.setSampleFormat(SampleFormat::F32);
@@ -295,7 +310,28 @@ std::optional<std::vector<std::byte>> PreviewConverter::convert(const AudioBuffe
             std::memcpy(normalised.data() + offset, &value, sizeof(value));
         }
     }
-    return process(reinterpret_cast<const uint8_t*>(normalised.data()), normalised.frameCount(), error);
+    auto converted = process(reinterpret_cast<const uint8_t*>(normalised.data()), normalised.frameCount(), error);
+    return converted ? route(std::move(*converted), error) : std::nullopt;
+}
+
+std::optional<std::vector<std::byte>> PreviewConverter::route(std::vector<std::byte> stereo, QString& error) const
+{
+    if(m_firstChannel == 0) {
+        return stereo;
+    }
+    const size_t stereoFrame   = static_cast<size_t>(m_output.bytesPerFrame());
+    const size_t physicalFrame = static_cast<size_t>(m_physicalOutput.bytesPerFrame());
+    const size_t frames        = stereo.size() / stereoFrame;
+    if(stereo.size() % stereoFrame != 0 || frames > PreviewMaxBufferBytes / physicalFrame) {
+        error = u"Routed preview PCM exceeds the bounded staging capacity."_s;
+        return {};
+    }
+    std::vector<std::byte> output(frames * physicalFrame, std::byte {0});
+    const auto offset = static_cast<size_t>(m_firstChannel - 1) * m_physicalOutput.bytesPerSample();
+    for(size_t frame = 0; frame < frames; ++frame) {
+        std::memcpy(output.data() + frame * physicalFrame + offset, stereo.data() + frame * stereoFrame, stereoFrame);
+    }
+    return output;
 }
 
 std::optional<std::vector<std::byte>> PreviewConverter::process(const uint8_t* input, int frames, QString& error)
@@ -337,7 +373,7 @@ std::optional<std::vector<std::byte>> PreviewConverter::finish(QString& error)
             return {};
         }
         if(data->empty()) {
-            return tail;
+            return route(std::move(tail), error);
         }
         if(data->size() > PreviewMaxBufferBytes - tail.size()) {
             break;

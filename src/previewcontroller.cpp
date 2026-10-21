@@ -105,8 +105,11 @@ void PreviewController::begin(const Track& track, uint64_t positionMs, bool paus
     m_snapshot.deviceAvailable = m_output && m_output->isAvailable();
     const auto error           = previewTrackError(track);
     if(!error.isEmpty() || !m_snapshot.deviceAvailable) {
-        m_snapshot.state = PreviewState::Error;
-        m_snapshot.error = error.isEmpty() ? u"Select an available headphone output before previewing."_s : error;
+        m_snapshot.state       = PreviewState::Error;
+        const auto outputError = m_output ? m_output->error() : QString {};
+        m_snapshot.error       = !error.isEmpty()       ? error
+                               : !outputError.isEmpty() ? outputError
+                                                        : u"Select an available headphone output before previewing."_s;
         publish();
         return;
     }
@@ -163,7 +166,7 @@ void PreviewController::opened(const std::shared_ptr<PreviewSession>& session, c
     m_initialPositionMs   = info.positionMs;
     m_snapshot.positionMs  = info.positionMs;
     m_snapshot.state      = m_snapshot.pauseRequested ? PreviewState::Paused : PreviewState::Buffering;
-    session->approve(*outputFormat);
+    session->approve(*outputFormat, m_output->channelPair());
     publish();
 }
 

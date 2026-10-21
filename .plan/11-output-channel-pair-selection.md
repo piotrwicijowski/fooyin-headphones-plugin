@@ -1,6 +1,29 @@
 # Ticket 11: explicit output channel-pair selection
 
-Status: planned; backend channel-routing feasibility must be established first.
+Status: implemented; Qt/PulseAudio software capture validated. Physical shared-interface
+validation and a Qt 6.4 runtime check remain outstanding.
+
+## Implemented experience and feasibility
+
+- One shared destination dropdown in the output widget and Configure. Ordinary
+  devices keep one entry; known-layout multichannel devices add `Automatic` and
+  `Channels 1/2`, `Channels 3/4`, etc. entries. The collapsed text includes the pair.
+- Widget activation commits device + pair atomically. Dialog changes stage until
+  Apply/OK; Cancel discards drafts. Unchanged application does not stop preview.
+- `Headphones/OutputRoute` binds the selected pair to the opaque device identity.
+  Missing devices/pairs stay visibly unavailable and block playback with no fallback
+  or reconnection autoplay. Existing settings migrate to Automatic.
+- Qt's reported channel configuration and a supported concrete format establish
+  pair choices, never maximum channel count. The initial implementation supports
+  canonical known layouts up to eight channels; unknown/AUX-only maps are excluded.
+- Logical stereo conversion precedes explicit zero-filled physical slot mapping.
+  Worker approval, queues, partial writes, sink format, and clocks retain physical
+  output frame sizes.
+- `tests/run-channel-pair-validation.py` captures real Qt output on PulseAudio 17.0
+  with a 48 kHz quad null sink. Qt 6.8.2 delivered exact silence in unselected lanes
+  for both pairs, and distinct concurrent streams remained on separate pairs.
+  Tests include 44.1-to-48 kHz conversion, preview pause/resume and sink replacement.
+  See `docs/development.md` for reproduction and the remaining physical checks.
 
 ## Goal and scope
 
@@ -63,19 +86,19 @@ the stereo downmix feeds the selected pair.
 
 ## Acceptance criteria
 
-- [ ] Automatic mode retains existing mono/stereo behaviour and settings migration
+- [x] Automatic mode retains existing mono/stereo behaviour and settings migration
   requires no action for existing users.
-- [ ] Fake-device negotiation tests reject unsupported channel counts/layouts,
+- [x] Fake-device negotiation tests reject unsupported channel counts/layouts,
   missing explicit pairs, and same-name/different-ID substitutes.
-- [ ] PCM fixtures place distinct left/right signals only on the selected pair;
+- [x] PCM fixtures place distinct left/right signals only on the selected pair;
   every unselected channel is zero across rate conversion, gain processing when
   enabled, seek, EOF tail, and partial-write boundaries.
-- [ ] Queue/staging memory limits, frame alignment, and processed position remain
+- [x] Queue/staging memory limits, frame alignment, and processed position remain
   correct with wide physical output frames.
-- [ ] Apply/Cancel, device changes, capability loss, restart persistence, and
+- [x] Apply/Cancel, device changes, capability loss, restart persistence, and
   hotplug preserve explicit selection and do not autoplay or fall back.
 - [ ] Software channel capture verifies the stream mapping; physical multichannel
   hardware validates the actual pair mapping and concurrent main/preview output,
   including replacement, pause, seek, stop, and disconnect behaviour.
-- [ ] Main playback, its routing/volume settings, active playback playlist, and
+- [x] Main playback, its routing/volume settings, active playback playlist, and
   queue remain unchanged throughout the preview workflow.

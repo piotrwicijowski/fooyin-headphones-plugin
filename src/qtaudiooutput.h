@@ -42,10 +42,15 @@ using PreviewSinkFactory = std::function<std::unique_ptr<PreviewAudioSink>(const
 class QtAudioOutput final : public PreviewOutput
 {
 public:
-    QtAudioOutput(HeadphoneDeviceCatalogue& devices, QByteArray selectedId, PreviewSinkFactory factory = {});
+    QtAudioOutput(HeadphoneDeviceCatalogue& devices, QByteArray selectedId, PreviewSinkFactory factory = {},
+                  int firstChannel = 0);
     ~QtAudioOutput() override;
 
     [[nodiscard]] bool isAvailable() const override;
+    [[nodiscard]] int channelPair() const override
+    {
+        return m_firstChannel;
+    }
     std::optional<AudioFormat> configure(const AudioFormat& input, QString& error) override;
     bool start(QString& error) override;
     void setPaused(bool paused) override;
@@ -61,6 +66,7 @@ public:
 private:
     HeadphoneDeviceCatalogue& m_devices;
     const QByteArray m_selectedId;
+    const int m_firstChannel;
     PreviewSinkFactory m_factory;
     std::unique_ptr<PreviewAudioSink> m_sink;
     QPointer<QIODevice> m_device;

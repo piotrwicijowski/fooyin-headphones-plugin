@@ -18,8 +18,12 @@ class PreviewOutput : public QObject
 {
     Q_OBJECT
 public:
-    virtual ~PreviewOutput()                                                                = default;
-    [[nodiscard]] virtual bool isAvailable() const                                          = 0;
+    virtual ~PreviewOutput()                       = default;
+    [[nodiscard]] virtual bool isAvailable() const = 0;
+    [[nodiscard]] virtual int channelPair() const
+    {
+        return 0;
+    }
     virtual std::optional<AudioFormat> configure(const AudioFormat& format, QString& error) = 0;
     virtual bool start(QString& error)                                                      = 0;
     virtual void setPaused(bool paused)                                                     = 0;

@@ -30,6 +30,91 @@ class PreviewConverterTest : public QObject
 {
     Q_OBJECT
 private Q_SLOTS:
+    void explicitOutputPairsPreserveStereoAndSilenceAcrossConversion()
+    {
+        for(const auto sample : {SampleFormat::F32, SampleFormat::S16, SampleFormat::S32}) {
+            for(const int inputChannels : {1, 2, 6}) {
+                for(const int rate : {44100, 48000}) {
+                    const AudioFormat input {SampleFormat::F32, 48000, inputChannels};
+                    const AudioFormat stereo {sample, rate, 2};
+                    const AudioFormat physical {sample, rate, 8};
+                    std::vector<float> signal(1024 * inputChannels);
+                    for(size_t i = 0; i < signal.size(); ++i) {
+                        signal[i] = 0.1F * std::sin(static_cast<float>(i) * 0.07F);
+                    }
+                    for(const int pair : {1, 3, 5, 7}) {
+                        for(const double gain : {1.0, 0.5}) {
+                            PreviewConverter logical, routed;
+                            QString error;
+                            QVERIFY2(logical.configure(input, stereo, error, gain), qPrintable(error));
+                            QVERIFY2(routed.configure(input, physical, error, gain, pair), qPrintable(error));
+                            auto expected = logical.convert(samples(signal, input), error);
+                            auto actual   = routed.convert(samples(signal, input), error);
+                            QVERIFY2(expected && actual, qPrintable(error));
+                            const auto verify = [&](const auto& reference, const auto& output) {
+                                const size_t sampleBytes = physical.bytesPerSample();
+                                const size_t frames      = reference.size() / stereo.bytesPerFrame();
+                                QCOMPARE(output.size(), frames * physical.bytesPerFrame());
+                                for(size_t frame = 0; frame < frames; ++frame) {
+                                    for(int channel = 0; channel < 8; ++channel) {
+                                        const size_t offset = (frame * 8 + channel) * sampleBytes;
+                                        if(channel == pair - 1 || channel == pair) {
+                                            const size_t source = (frame * 2 + channel - pair + 1) * sampleBytes;
+                                            QVERIFY(std::equal(output.begin() + offset,
+                                                               output.begin() + offset + sampleBytes,
+                                                               reference.begin() + source));
+                                        }
+                                        else {
+                                            QVERIFY(std::all_of(output.begin() + offset,
+                                                                output.begin() + offset + sampleBytes,
+                                                                [](std::byte byte) { return byte == std::byte {0}; }));
+                                        }
+                                    }
+                                }
+                            };
+                            verify(*expected, *actual);
+                            const auto expectedTail = logical.finish(error);
+                            const auto actualTail   = routed.finish(error);
+                            QVERIFY2(expectedTail && actualTail, qPrintable(error));
+                            verify(*expectedTail, *actualTail);
+                            QVERIFY(routed.finish(error)->empty());
+                            // Reconfiguration discards every previous route and resampler tail.
+                            QVERIFY(routed.configure(input, stereo, error));
+                            QCOMPARE(routed.convert(samples(signal, input), error)->size(), expected->size());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    void explicitOutputDoesNotBroadenInputOrAutomaticOutputValidation()
+    {
+        PreviewConverter converter;
+        QString error;
+        const AudioFormat wide {SampleFormat::F32, 48000, 8};
+        const AudioFormat stereo {SampleFormat::F32, 48000, 2};
+        QVERIFY(!converter.configure(stereo, wide, error));
+        for(const int pair : {-1, 2, 8, 9}) {
+            QVERIFY(!converter.configure(stereo, wide, error, 1.0, pair));
+        }
+        auto unknown = wide;
+        unknown.clearChannelLayout();
+        QVERIFY(!converter.configure(stereo, unknown, error, 1.0, 3));
+        QVERIFY(!converter.configure(unknown, wide, error, 1.0, 3));
+    }
+
+    void routedExpansionEnforcesPhysicalStagingLimit()
+    {
+        PreviewConverter converter;
+        QString error;
+        const AudioFormat input {SampleFormat::F32, 8000, 1};
+        QVERIFY(converter.configure(input, {SampleFormat::F32, 768000, 8}, error, 1.0, 7));
+        const std::vector<float> signal(PreviewBlockFrames, 0.25F);
+        QVERIFY(!converter.convert(samples(signal, input), error));
+        QVERIFY(error.contains(QStringLiteral("bounded staging")));
+    }
+
     void multichannelRouting_data()
     {
         using P      = AudioFormat::ChannelPosition;

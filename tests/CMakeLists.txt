@@ -32,6 +32,9 @@ target_link_libraries(previewoutputtest PRIVATE HeadphonesPreviewEngine Qt6::Tes
 add_test(NAME headphones.preview-output COMMAND previewoutputtest)
 set_tests_properties(headphones.preview-output PROPERTIES TIMEOUT 30)
 
+add_executable(channelpairprobe channelpairprobe.cpp)
+target_link_libraries(channelpairprobe PRIVATE HeadphonesPreviewEngine)
+
 add_executable(headphonesguitest headphonesguitest.cpp fakes/audiosinkfakes.h fakes/previewfakes.h)
 target_link_libraries(headphonesguitest PRIVATE HeadphonesGui Qt6::Test)
 add_test(NAME headphones.gui COMMAND headphonesguitest)

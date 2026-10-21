@@ -61,6 +61,7 @@ set(HEADPHONES_SOURCES
     src/headphonesplugin.h
     src/headphoneslog.h)
 add_library(HeadphonesGui STATIC
+    src/headphonesdestinationchoice.h src/headphonesdestinationchoice.cpp
     src/headphonesactions.h src/headphonesactions.cpp
     src/headphonescontrolwidget.h src/headphonescontrolwidget.cpp
     src/headphonesoutputdevice.h src/headphonesoutputdevice.cpp

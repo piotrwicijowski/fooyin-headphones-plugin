@@ -32,7 +32,16 @@ inline HeadphoneDevice fakeDevice(const QByteArray& id,
             QStringLiteral("Same device description"),
             formats.front(),
             [formats](const AudioFormat& format) { return std::ranges::find(formats, format) != formats.end(); },
+            {},
             {}};
+}
+
+inline HeadphoneDevice fakePairDevice(const QByteArray& id, AudioFormat physical = {SampleFormat::F32, 48000, 4})
+{
+    auto device        = fakeDevice(id, {{SampleFormat::F32, 48000, 2}, physical});
+    device.description = QStringLiteral("USB Interface");
+    device.pairFormats = {physical};
+    return device;
 }
 
 struct SinkState

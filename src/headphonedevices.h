@@ -20,6 +20,8 @@ struct HeadphoneDevice
     AudioFormat preferredFormat;
     std::function<bool(const AudioFormat&)> supportsFormat;
     QAudioDevice qtDevice; // Only real catalogue entries carry an actual Qt device.
+    // Concrete formats with a known, ordered channel map, never inferred from a maximum count.
+    std::vector<AudioFormat> pairFormats;
 };
 
 class HeadphoneDeviceCatalogue : public QObject
@@ -46,7 +48,10 @@ private:
 
 [[nodiscard]] QString encodeDeviceId(const QByteArray& id);
 [[nodiscard]] QByteArray decodeDeviceId(const QString& encoded);
-[[nodiscard]] std::optional<AudioFormat> negotiatePreviewFormat(const HeadphoneDevice& device,
-                                                                const AudioFormat& input);
+[[nodiscard]] QAudioFormat qtPreviewFormat(const AudioFormat& format);
+[[nodiscard]] bool isExplicitPairFormat(const AudioFormat& format, int firstChannel);
+[[nodiscard]] std::vector<int> previewChannelPairs(const HeadphoneDevice& device);
+[[nodiscard]] std::optional<AudioFormat> negotiatePreviewFormat(const HeadphoneDevice& device, const AudioFormat& input,
+                                                                int firstChannel = 0);
 
 } // namespace Fooyin::Headphones

@@ -19,15 +19,19 @@ public:
     PreviewConverter(const PreviewConverter&)            = delete;
     PreviewConverter& operator=(const PreviewConverter&) = delete;
 
-    bool configure(const AudioFormat& input, const AudioFormat& output, QString& error, double linearGain = 1.0);
+    bool configure(const AudioFormat& input, const AudioFormat& output, QString& error, double linearGain = 1.0,
+                   int firstChannel = 0);
     std::optional<std::vector<std::byte>> convert(const AudioBuffer& input, QString& error);
     std::optional<std::vector<std::byte>> finish(QString& error);
     void reset();
 
 private:
     std::optional<std::vector<std::byte>> process(const uint8_t* input, int frames, QString& error);
+    std::optional<std::vector<std::byte>> route(std::vector<std::byte> stereo, QString& error) const;
     AudioFormat m_input;
     AudioFormat m_output;
+    AudioFormat m_physicalOutput;
+    int m_firstChannel {0};
     SwrContext* m_context {nullptr};
     std::array<int, 8> m_channelMap {}; // libswresample borrows this mapping for the context lifetime.
     double m_linearGain {1.0};

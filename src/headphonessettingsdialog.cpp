@@ -2,17 +2,15 @@
 #include "headphonessettingsdialog.h"
 
 #include "headphonedevices.h"
+#include "headphonesdestinationchoice.h"
 #include "headphonessettings.h"
 
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QLabel>
 #include <QPushButton>
-#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QVBoxLayout>
-
-#include <algorithm>
 
 using namespace Qt::StringLiterals;
 
@@ -27,18 +25,20 @@ HeadphonesSettingsDialog::HeadphonesSettingsDialog(HeadphonesSettings& settings,
     , m_startOffset {new QSpinBox(this)}
     , m_pendingId {settings.deviceId()}
     , m_pendingDescription {settings.deviceDescription()}
+    , m_pendingPair {settings.outputChannelPair()}
 {
     setObjectName(u"Headphones.Settings"_s);
     setWindowTitle(tr("Headphones Preview"));
     auto* layout = new QVBoxLayout(this);
-    auto* label  = new QLabel(tr("Headphone output device:"), this);
+    auto* label  = new QLabel(tr("Headphone output:"), this);
     m_combo->setObjectName(u"Headphones.DeviceChoice"_s);
-    m_combo->setAccessibleName(tr("Headphone output device"));
+    m_combo->setAccessibleName(tr("Headphone output"));
     label->setBuddy(m_combo);
     layout->addWidget(label);
     layout->addWidget(m_combo);
-    auto* note = new QLabel(tr("Choose a separately addressable device different from fooyin’s main output. "
-                               "OS audio policy can reroute streams on disconnect; verify your routing setup. "
+    auto* note = new QLabel(tr("Choose the device or channel pair connected to your headphones. "
+                               "Configure fooyin’s main output separately. "
+                               "Automatic uses the device’s normal mono/stereo output. "
                                "Preview volume is controlled in the Headphones Volume Controls widget."),
                             this);
     note->setWordWrap(true);
@@ -65,7 +65,9 @@ HeadphonesSettingsDialog::HeadphonesSettingsDialog(HeadphonesSettings& settings,
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(m_combo, &QComboBox::currentIndexChanged, this, [this]() {
         m_pendingId          = m_combo->currentData().toByteArray();
-        m_pendingDescription = m_combo->currentData(Qt::UserRole + 1).toString();
+        m_pendingDescription = m_combo->currentData(DestinationDescriptionRole).toString();
+        m_pendingPair        = m_combo->currentData(DestinationPairRole).toInt();
+        m_combo->setToolTip(tr("%1\nChanging output stops preview. Press Play to restart.").arg(m_combo->currentText()));
     });
     connect(&devices, &HeadphoneDeviceCatalogue::devicesChanged, this, &HeadphonesSettingsDialog::refreshDevices);
     refreshDevices();
@@ -74,29 +76,8 @@ HeadphonesSettingsDialog::HeadphonesSettingsDialog(HeadphonesSettings& settings,
 
 void HeadphonesSettingsDialog::refreshDevices()
 {
-    const QSignalBlocker blocker {m_combo};
-    m_combo->clear();
-    m_combo->addItem(tr("Not configured"), QByteArray {});
     const auto devices = m_devices ? m_devices->devices() : std::vector<HeadphoneDevice> {};
-    bool found         = m_pendingId.isEmpty();
-    for(const auto& device : devices) {
-        if(device.id.isEmpty()) {
-            continue;
-        }
-        const auto duplicates = std::count_if(
-            devices.begin(), devices.end(), [&](const auto& other) { return other.description == device.description; });
-        const auto name
-            = duplicates > 1 ? tr("%1 [%2]").arg(device.description, encodeDeviceId(device.id)) : device.description;
-        m_combo->addItem(name, device.id);
-        m_combo->setItemData(m_combo->count() - 1, device.description, Qt::UserRole + 1);
-        found = found || device.id == m_pendingId;
-    }
-    if(!found) {
-        m_combo->addItem(tr("Unavailable — %1 [%2]").arg(m_pendingDescription, encodeDeviceId(m_pendingId)),
-                         m_pendingId);
-        m_combo->setItemData(m_combo->count() - 1, m_pendingDescription, Qt::UserRole + 1);
-    }
-    m_combo->setCurrentIndex(m_combo->findData(m_pendingId));
+    populateDestinationChoice(*m_combo, devices, m_pendingId, m_pendingDescription, m_pendingPair);
 }
 
 void HeadphonesSettingsDialog::resetPending()
@@ -104,6 +85,7 @@ void HeadphonesSettingsDialog::resetPending()
     if(m_settings) {
         m_pendingId          = m_settings->deviceId();
         m_pendingDescription = m_settings->deviceDescription();
+        m_pendingPair        = m_settings->outputChannelPair();
         m_startOffset->setValue(m_settings->previewStartOffsetSeconds());
         refreshDevices();
     }
@@ -124,8 +106,7 @@ void HeadphonesSettingsDialog::showEvent(QShowEvent* event)
 void HeadphonesSettingsDialog::apply()
 {
     if(m_settings) {
-        const auto description = m_combo->currentData(Qt::UserRole + 1).toString();
-        m_settings->setDevice(m_pendingId, description);
+        m_settings->setDestination(m_pendingId, m_pendingDescription, m_pendingPair);
         m_settings->setPreviewStartOffsetSeconds(m_startOffset->value());
     }
 }

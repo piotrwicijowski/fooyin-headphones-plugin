@@ -30,6 +30,7 @@ private:
     QSpinBox* m_startOffset;
     QByteArray m_pendingId;
     QString m_pendingDescription;
+    int m_pendingPair {0};
 };
 
 // Shared by the host's provider adapter and all player-control configure buttons.

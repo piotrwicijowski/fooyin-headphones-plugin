@@ -22,12 +22,7 @@ class QtSink final : public PreviewAudioSink
 public:
     QtSink(const QAudioDevice& device, const AudioFormat& format)
     {
-        QAudioFormat qtFormat;
-        qtFormat.setSampleRate(format.sampleRate());
-        qtFormat.setChannelCount(format.channelCount());
-        qtFormat.setSampleFormat(format.sampleFormat() == SampleFormat::F32   ? QAudioFormat::Float
-                                 : format.sampleFormat() == SampleFormat::S16 ? QAudioFormat::Int16
-                                                                              : QAudioFormat::Int32);
+        const auto qtFormat = qtPreviewFormat(format);
         // This is deliberately the explicit-device overload, never the default.
         m_sink = std::make_unique<QAudioSink>(device, qtFormat);
     }
@@ -103,9 +98,11 @@ double previewVolumeGain(double uiVolume)
                                    AudioApi::LinearVolumeScale);
 }
 
-QtAudioOutput::QtAudioOutput(HeadphoneDeviceCatalogue& devices, QByteArray selectedId, PreviewSinkFactory factory)
+QtAudioOutput::QtAudioOutput(HeadphoneDeviceCatalogue& devices, QByteArray selectedId, PreviewSinkFactory factory,
+                             int firstChannel)
     : m_devices {devices}
     , m_selectedId {std::move(selectedId)}
+    , m_firstChannel {firstChannel}
     , m_factory {std::move(factory)}
 {
     if(!m_factory) {
@@ -120,11 +117,23 @@ QtAudioOutput::QtAudioOutput(HeadphoneDeviceCatalogue& devices, QByteArray selec
     QObject::connect(&m_devices, &HeadphoneDeviceCatalogue::devicesChanged, this, [this]() {
         const bool available = isAvailable();
         if(m_available && !available) {
+            const auto configured = m_format;
             reset(); // Discard before notifying the controller, even while paused.
+            // Keep the lost format long enough for the controller to observe
+            // invalidation even if a different format still exposes this pair.
+            m_format = configured;
         }
         if(m_available != available) {
             m_available = available;
             Q_EMIT availabilityChanged();
+            // A controller may reset the invalidated session in response. If
+            // the pair still has a different supported format, make explicit
+            // Play available again without reopening or restarting anything.
+            const bool refreshed = isAvailable();
+            if(m_available != refreshed) {
+                m_available = refreshed;
+                Q_EMIT availabilityChanged();
+            }
         }
     });
 }
@@ -136,16 +145,29 @@ QtAudioOutput::~QtAudioOutput()
 
 bool QtAudioOutput::isAvailable() const
 {
-    return m_devices.resolve(m_selectedId).has_value();
+    const auto device = m_devices.resolve(m_selectedId);
+    if(!device) {
+        return false;
+    }
+    if(m_firstChannel == 0) {
+        return true;
+    }
+    const auto pairs = previewChannelPairs(*device);
+    return std::ranges::find(pairs, m_firstChannel) != pairs.end()
+        && (!m_format.isValid()
+            || (std::ranges::find(device->pairFormats, m_format) != device->pairFormats.end()
+                && device->supportsFormat(m_format)));
 }
 
 std::optional<AudioFormat> QtAudioOutput::configure(const AudioFormat& input, QString& error)
 {
     reset();
     const auto device = m_devices.resolve(m_selectedId);
-    const auto format = device ? negotiatePreviewFormat(*device, input) : std::optional<AudioFormat> {};
+    const auto format = device ? negotiatePreviewFormat(*device, input, m_firstChannel) : std::optional<AudioFormat> {};
     if(!format) {
-        error = device ? u"The selected headphone device has no supported mono/stereo PCM format."_s
+        error = device ? (m_firstChannel != 0
+                              ? u"The selected headphone channel pair is unavailable. Choose another output."_s
+                              : u"The selected headphone device has no supported mono/stereo PCM format."_s)
                        : u"The explicitly selected headphone device is missing or not configured."_s;
         return {};
     }
@@ -156,7 +178,8 @@ std::optional<AudioFormat> QtAudioOutput::configure(const AudioFormat& input, QS
 bool QtAudioOutput::start(QString& error)
 {
     const auto device = m_devices.resolve(m_selectedId);
-    if(!device || !m_format.isValid() || !device->supportsFormat || !device->supportsFormat(m_format)) {
+    if(!device || !isAvailable() || !m_format.isValid() || !device->supportsFormat
+       || !device->supportsFormat(m_format)) {
         error = u"The selected headphone device or format is no longer available."_s;
         return false;
     }
@@ -252,6 +275,14 @@ uint64_t QtAudioOutput::processedMs() const
 
 QString QtAudioOutput::error() const
 {
+    if(!isAvailable()) {
+        return m_firstChannel > 0
+                 ? u"Channels %1/%2 are unavailable on the selected headphone device. Choose another output."_s
+                       .arg(m_firstChannel)
+                       .arg(m_firstChannel + 1)
+             : m_firstChannel < 0 ? u"The saved headphone channel selection is invalid. Choose another output."_s
+                                  : u"The explicitly selected headphone device is missing or not configured."_s;
+    }
     if(!m_sink || !m_started) {
         return {};
     }

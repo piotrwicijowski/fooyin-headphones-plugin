@@ -2,11 +2,12 @@
 #include "fakes/audiosinkfakes.h"
 #include "fakes/previewfakes.h"
 #include "headphonesactions.h"
+#include "headphonesdestinationchoice.h"
 #include "headphonesoutputdevice.h"
-#include "headphonessettings.h"
-#include "headphonessettingsdialog.h"
 #include "headphonesplayercontrol.h"
 #include "headphonesseekbar.h"
+#include "headphonessettings.h"
+#include "headphonessettingsdialog.h"
 #include "headphonestrackinfo.h"
 #include "headphonesvolumecontrol.h"
 
@@ -18,12 +19,12 @@
 #include <utils/settings/settingsmanager.h>
 #include <utils/stringutils.h>
 
+#include <QBoxLayout>
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QDialogButtonBox>
-#include <QLabel>
-#include <QBoxLayout>
 #include <QJsonObject>
+#include <QLabel>
 #include <QMainWindow>
 #include <QMenu>
 #include <QPushButton>
@@ -45,6 +46,85 @@ class HeadphonesGuiTest : public QObject
 {
     Q_OBJECT
 private Q_SLOTS:
+    void combinedDestinationsCommitAtomicallyAndStageInDialog()
+    {
+        QTemporaryDir dir;
+        SettingsManager manager {dir.filePath(u"settings.ini"_s)};
+        HeadphonesSettings settings {&manager};
+        FakeDeviceCatalogue catalogue;
+        catalogue.entries = {fakeDevice("headphones"), fakePairDevice("interface")};
+        settings.setDevice("headphones", u"Headphones"_s);
+        PreviewHarness h;
+        h.add(u"preview.wav"_s);
+        h.create();
+        connect(&settings, &HeadphonesSettings::deviceChanged, h.controller.get(), [&] {
+            h.controller->setOutput(std::make_unique<QtAudioOutput>(catalogue, settings.deviceId(),
+                                                                    fakeSinkFactory(std::make_shared<SinkState>()),
+                                                                    settings.outputChannelPair()));
+        });
+        HeadphonesOutputDevice widget {settings, catalogue};
+        HeadphonesOutputDevice otherWidget {settings, catalogue};
+        auto* combo          = widget.findChild<QComboBox*>(u"Headphones.DeviceChoice"_s);
+        auto* other          = otherWidget.findChild<QComboBox*>(u"Headphones.DeviceChoice"_s);
+        const auto pairIndex = [](QComboBox* choice, int pair) {
+            return choice->findData(pair, DestinationPairRole);
+        };
+        QVERIFY(combo && other);
+        QCOMPARE(combo->itemText(combo->findData(QByteArray {"headphones"})), u"Same device description"_s);
+        QCOMPARE(combo->itemText(pairIndex(combo, 3)), u"USB Interface — Channels 3/4"_s);
+        h.controller->previewTrack(Track {u"preview.wav"_s});
+        QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Playing);
+        const auto generation = h.controller->snapshot().generation;
+        combo->setCurrentIndex(pairIndex(combo, 3)); // Browsing is not a commit.
+        QCOMPARE(settings.outputChannelPair(), 0);
+        QCOMPARE(h.controller->snapshot().generation, generation);
+        QSignalSpy changes {&settings, &HeadphonesSettings::deviceChanged};
+        Q_EMIT combo->activated(combo->currentIndex());
+        QCOMPARE(changes.size(), 1);
+        QCOMPARE(settings.deviceId(), QByteArray {"interface"});
+        QCOMPARE(settings.outputChannelPair(), 3);
+        QCOMPARE(other->currentText(), u"USB Interface — Channels 3/4"_s);
+        QCOMPARE(h.controller->snapshot().state, PreviewState::Stopped);
+        QCOMPARE(h.controller->snapshot().generation, generation + 1);
+        Q_EMIT combo->activated(combo->currentIndex());
+        QCOMPARE(changes.size(), 1);
+        QCOMPARE(h.controller->snapshot().generation, generation + 1);
+        h.controller->previewTrack(Track {u"preview.wav"_s});
+        QTRY_COMPARE(h.controller->snapshot().state, PreviewState::Playing);
+        const auto activeGeneration = h.controller->snapshot().generation;
+
+        HeadphonesSettingsDialog dialog {settings, catalogue};
+        auto* draft   = dialog.findChild<QComboBox*>(u"Headphones.DeviceChoice"_s);
+        auto* buttons = dialog.findChild<QDialogButtonBox*>(u"Headphones.SettingsButtons"_s);
+        QCOMPARE(draft->currentText(), combo->currentText());
+        draft->setCurrentIndex(pairIndex(draft, 1));
+        QCOMPARE(settings.outputChannelPair(), 3);
+        buttons->button(QDialogButtonBox::Cancel)->click();
+        QCOMPARE(settings.outputChannelPair(), 3);
+        dialog.show();
+        QCOMPARE(draft->currentData(DestinationPairRole).toInt(), 3);
+        buttons->button(QDialogButtonBox::Apply)->click();
+        QCOMPARE(changes.size(), 1);
+        QCOMPARE(h.controller->snapshot().generation, activeGeneration);
+        QCOMPARE(h.controller->snapshot().state, PreviewState::Playing);
+        draft->setCurrentIndex(pairIndex(draft, 1));
+        buttons->button(QDialogButtonBox::Apply)->click();
+        QCOMPARE(changes.size(), 2);
+        QCOMPARE(settings.outputChannelPair(), 1);
+        QCOMPARE(combo->currentText(), u"USB Interface — Channels 1/2"_s);
+
+        catalogue.change({fakeDevice("interface")});
+        QVERIFY(combo->currentText().contains(u"Unavailable"));
+        QVERIFY(combo->currentText().contains(u"Channels 1/2"));
+        QCOMPARE(settings.outputChannelPair(), 1);
+        catalogue.change({fakePairDevice("same-name-other-id")});
+        QVERIFY(combo->currentText().contains(u"Unavailable"));
+        catalogue.change({fakePairDevice("interface")});
+        QCOMPARE(combo->currentText(), u"USB Interface — Channels 1/2"_s);
+        QCOMPARE(changes.size(), 2);
+        QCOMPARE(h.controller->snapshot().state, PreviewState::Stopped);
+    }
+
     void additionalCommandsRegisterAndShareVolumeWithoutOutput()
     {
         QTemporaryDir dir;

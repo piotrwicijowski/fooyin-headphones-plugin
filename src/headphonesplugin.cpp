@@ -200,12 +200,14 @@ void HeadphonesPlugin::applyOutputDevice()
         return;
     }
     const auto selected = m_preferences->deviceId();
-    if(m_outputAttached && selected == m_selectedDevice) {
+    const auto pair     = m_preferences->outputChannelPair();
+    if(m_outputAttached && selected == m_selectedDevice && pair == m_selectedChannelPair) {
         return;
     }
-    m_selectedDevice = selected;
-    m_outputAttached = true;
-    m_controller->setOutput(std::make_unique<QtAudioOutput>(*m_devices, selected));
+    m_selectedDevice      = selected;
+    m_selectedChannelPair = pair;
+    m_outputAttached      = true;
+    m_controller->setOutput(std::make_unique<QtAudioOutput>(*m_devices, selected, PreviewSinkFactory {}, pair));
 }
 
 void HeadphonesPlugin::stopPreview()

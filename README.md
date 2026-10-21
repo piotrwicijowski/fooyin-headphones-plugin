@@ -8,9 +8,8 @@ track or changing the queue, volume, or output settings.
 
 - **Independent playback:** preview, play/pause, stop, seek, and adjust headphone
   volume separately from the main player.
-- **Explicit output selection:** choose the headphone device separate from the
-  main output. The selection is persisted and does not fallback to other devices,
-  so there is no risk of accidentally playing headphone preview on main output.
+- **Explicit output selection:** choose a separate headphone device or a supported
+  channel pair on a multichannel interface. Your selection is saved.
 - **Flexible layout:** five independently placeable widgets for transport,
   seeking, volume, output selection, and track information.
 - **Track actions and shortcuts:** preview from a track's context menu or assign
@@ -112,7 +111,7 @@ cmake --install build-sdk
 
 1. Select the main output device explicitly in fooyin's playback/output settings.
 2. Open fooyin's plugin settings, select **Headphones Preview → Configure**, and
-   choose a different, separately addressable headphone device. Apply the change.
+   choose the device or channel pair connected to your headphones.
 3. Select a local track, right-click it, and choose **Preview in headphones**.
 4. For on-screen controls, enable layout editing and add widgets from
    **Headphones plugin**. **Headphones Player Controls** includes a
@@ -149,10 +148,26 @@ Add any combination of these widgets under **Headphones plugin**:
 | **Headphones Player Controls** | Preview selected, Stop, and Play/Pause; optionally show separate Play, Pause, and Configure buttons. Automatic, Horizontal, or Vertical orientation. |
 | **Headphones Seekbar** | Seek within the preview; configure labels, remaining time, and orientation. |
 | **Headphones Volume Controls** | Independent volume and mute; show the slider, mute icon, or both, and choose orientation. |
-| **Headphones Output Device** | Select the headphone output; changes apply immediately. |
+| **Headphones Output Device** | Select the headphone device or channel pair; changes apply immediately. |
 | **Headphones Track Info** | Show the preview's Artist - Title, or just its title when no artist is available. |
 
 All layout widget instances control the same preview.
+
+### Output channel pairs
+
+Choose your headphone device in the output dropdown. Supported multichannel
+interfaces also offer pairs such as **USB Interface — Channels 3/4**.
+**Automatic** uses the device's normal mono/stereo output.
+
+Choose the pair connected to your headphones. If main playback and preview share
+an interface, use different output pairs and configure fooyin's main output
+separately.
+
+Widget selections apply immediately; changes in Configure take effect on
+**Apply/OK**. Changing output stops preview. Press Play to restart.
+
+If a saved device or pair becomes unavailable, it stays selected and preview
+stops. The plugin never switches to another output automatically.
 
 ## Keyboard shortcuts
 
@@ -221,14 +236,15 @@ $if(%headphones_isstopped%,Stopped,$if(%headphones_ispaused%,Paused,Playing))[: 
 
 ## Audio routing and troubleshooting
 
-Use separately addressable main and headphone devices. Using the same device
-results in both main track and headphones preview to be mixed.
+Use separate main/headphone devices or different output pairs on a supported
+multichannel interface. Sending both streams to the same output mixes main
+playback and preview.
 
 The preview pipeline uses Qt Multimedia output and its own volume. It applies
 ReplayGain using fooyin's shared configuration, independently of the main audio
 pipeline; main DSP and main volume are not applied. Remote streams, virtual/CD
-sources, archive-backed tracks, multichannel audio, and decoders that prohibit
-concurrent decoding are unsupported.
+sources, archive-backed tracks, unsupported multichannel layouts, and decoders
+that prohibit concurrent decoding are unsupported.
 
 ### Device disconnects and unexpected routing
 

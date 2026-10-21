@@ -57,6 +57,7 @@ private:
     std::shared_ptr<std::vector<QPointer<FyWidget>>> m_widgets;
     QPointer<SettingsManager> m_settingsManager;
     QByteArray m_selectedDevice;
+    int m_selectedChannelPair {0};
     bool m_outputAttached {false};
     bool m_coreInitialised {false};
     bool m_guiInitialised {false};

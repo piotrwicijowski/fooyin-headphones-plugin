@@ -9,6 +9,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <cstring>
+
 using namespace Qt::StringLiterals;
 using namespace Fooyin;
 using namespace Fooyin::Headphones;
@@ -18,6 +20,199 @@ class PreviewOutputTest : public QObject
 {
     Q_OBJECT
 private Q_SLOTS:
+    void explicitPairsRequireConcreteKnownFormats()
+    {
+        const AudioFormat input {SampleFormat::F32, 44100, 2};
+        auto device = fakePairDevice("interface");
+        QCOMPARE(previewChannelPairs(device), (std::vector<int> {1, 3}));
+        QCOMPARE(negotiatePreviewFormat(device, input, 3), std::optional<AudioFormat>(device.pairFormats.front()));
+        QVERIFY(!negotiatePreviewFormat(device, input, 5));
+        QVERIFY(!negotiatePreviewFormat(device, input, -1));
+        QVERIFY(!negotiatePreviewFormat(device, input, 2));
+        device.pairFormats.clear();
+        QVERIFY(previewChannelPairs(device).empty()); // Count-only support is insufficient.
+        QVERIFY(!negotiatePreviewFormat(device, input, 3));
+        device = fakePairDevice("interface");
+        device.pairFormats.front().clearChannelLayout();
+        QVERIFY(previewChannelPairs(device).empty());
+        device      = fakePairDevice("interface");
+        auto layout = device.pairFormats.front().channelLayout();
+        std::swap(layout[0], layout[1]);
+        device.pairFormats.front().setChannelLayout(layout);
+        QVERIFY(previewChannelPairs(device).empty()); // A mask cannot represent permutations.
+        device                = fakePairDevice("interface");
+        device.supportsFormat = [](const AudioFormat&) {
+            return false;
+        };
+        QVERIFY(previewChannelPairs(device).empty());
+    }
+
+    void explicitPairRevalidationAndPhysicalClock()
+    {
+        FakeDeviceCatalogue catalogue;
+        catalogue.entries = {fakePairDevice("interface")};
+        auto sink         = std::make_shared<SinkState>();
+        QtAudioOutput output {catalogue, "interface", fakeSinkFactory(sink), 3};
+        QString error;
+        QVERIFY(output.isAvailable());
+        const auto physical = output.configure({SampleFormat::F32, 48000, 2}, error);
+        QVERIFY(physical);
+        QCOMPARE(physical->channelCount(), 4);
+        QVERIFY(output.start(error));
+        QCOMPARE(sink->requestedBuffer, qsizetype {76800});
+        std::vector<std::byte> data(physical->bytesForDuration(100));
+        sink->maxWrite = 3;
+        QCOMPARE(output.write(data), qint64 {3});
+        sink->maxWrite = static_cast<qint64>(data.size());
+        QCOMPARE(output.write(std::span {data}.subspan(3)), static_cast<qint64>(data.size() - 3));
+        sink->processed = 200000;
+        QCOMPARE(output.processedMs(), uint64_t {100}); // Physical frames, not logical stereo.
+        QSignalSpy changes {&output, &PreviewOutput::availabilityChanged};
+        catalogue.change({fakeDevice("interface")});
+        QVERIFY(!output.isAvailable());
+        QVERIFY(sink->lastDevice.isNull());
+        QCOMPARE(changes.size(), 1);
+        QVERIFY(!output.configure({SampleFormat::F32, 48000, 2}, error));
+        QVERIFY(error.contains(u"channel pair"));
+        catalogue.change({fakePairDevice("same-name-other-id")});
+        QVERIFY(!output.isAvailable());
+        catalogue.change({fakePairDevice("interface")});
+        QVERIFY(output.isAvailable());
+        QCOMPARE(sink->starts, 1); // No reconnection autoplay.
+        QVERIFY(output.configure({SampleFormat::F32, 48000, 2}, error));
+        auto replacement = fakePairDevice("interface", {SampleFormat::S16, 44100, 4});
+        catalogue.change({replacement});
+        QVERIFY(!output.start(error)); // Revalidate the approved format, not just pair membership.
+    }
+
+    void pairSettingsAreAtomicBoundAndPersistent()
+    {
+        QTemporaryDir directory;
+        const auto path = directory.filePath(u"settings.ini"_s);
+        {
+            SettingsManager manager {path};
+            HeadphonesSettings settings {&manager};
+            QCOMPARE(settings.outputChannelPair(), 0);
+            QSignalSpy changes {&settings, &HeadphonesSettings::deviceChanged};
+            connect(&settings, &HeadphonesSettings::deviceChanged, &settings, [&] {
+                QVERIFY(settings.deviceId() == QByteArray {"interface"});
+                QCOMPARE(settings.outputChannelPair(), 3);
+            });
+            settings.setDestination("interface", u"USB Interface"_s, 3);
+            QCOMPARE(changes.size(), 1);
+            settings.setDestination("interface", u"Renamed interface"_s, 3);
+            QCOMPARE(changes.size(), 1);
+            manager.storeAllSettings();
+        }
+        SettingsManager manager {path};
+        HeadphonesSettings settings {&manager};
+        QCOMPARE(settings.deviceId(), QByteArray {"interface"});
+        QCOMPARE(settings.outputChannelPair(), 3);
+        manager.set(u"Headphones/DeviceId", encodeDeviceId("same-name-other-id"));
+        QCOMPARE(settings.outputChannelPair(), -1); // Never reuse the old pair on a different device.
+        settings.setDevice("different", u"Other"_s);
+        QCOMPARE(settings.outputChannelPair(), 0);
+        settings.setDestination("different", u"Other"_s, 2);
+        QCOMPARE(settings.outputChannelPair(), -1);
+    }
+
+    void routedWorkerPreservesIsolationAcrossShortWritesPauseSeekAndReplacement()
+    {
+        FakeDeviceCatalogue catalogue;
+        catalogue.entries = {fakePairDevice("interface", {SampleFormat::S16, 1000, 4})};
+        auto library      = std::make_shared<SourceLibrary>();
+        auto plan         = std::make_shared<SourcePlan>();
+        plan->format      = {SampleFormat::S16, 1000, 2};
+        plan->base        = 123;
+        library->plans.insert(u"track.wav"_s, plan);
+        auto sink      = std::make_shared<SinkState>();
+        sink->maxWrite = 4093; // Deliberately splits physical frames and sample containers.
+        PreviewController controller {
+            [library]() { return std::make_unique<FakeSource>(library); },
+            std::make_unique<QtAudioOutput>(catalogue, "interface", fakeSinkFactory(sink), 3)};
+        controller.previewTrack(Track {u"track.wav"_s});
+        QTRY_VERIFY(!sink->epochs.empty() && sink->epochs.back().size() >= 8);
+        controller.playPause();
+        QCOMPARE(controller.snapshot().state, PreviewState::Paused);
+        const auto bytes = sink->epochs.back().size();
+        QTest::qWait(30);
+        QCOMPARE(sink->epochs.back().size(), bytes);
+        QVERIFY(controller.seek(1000));
+        QTRY_COMPARE(controller.snapshot().state, PreviewState::Paused);
+        const auto starts = sink->starts;
+        controller.playPause();
+        QTRY_COMPARE(sink->starts, starts + 1);
+        QTRY_VERIFY(sink->epochs.back().size() >= 8);
+        controller.stop();
+        controller.previewTrack(Track {u"track.wav"_s});
+        QTRY_COMPARE(sink->starts, starts + 2);
+        QTRY_VERIFY(sink->epochs.back().size() >= 8);
+        controller.playPause();
+        catalogue.change({fakeDevice("interface")});
+        QCOMPARE(controller.snapshot().state, PreviewState::Error);
+        QVERIFY(!controller.snapshot().deviceAvailable);
+        catalogue.change({fakePairDevice("interface", {SampleFormat::S16, 1000, 4})});
+        QVERIFY(controller.snapshot().deviceAvailable);
+        QCOMPARE(controller.snapshot().state, PreviewState::Error);
+        QCOMPARE(sink->starts, starts + 2);
+        QCOMPARE(sink->epochs.size(), size_t {3});
+        for(size_t epoch = 0; epoch < sink->epochs.size(); ++epoch) {
+            const auto& data = sink->epochs[epoch];
+            for(qsizetype frame = 0; frame < data.size() / 8; ++frame) {
+                QCOMPARE(data[frame * 8], char {0});
+                QCOMPARE(data[frame * 8 + 1], char {0});
+                QCOMPARE(data[frame * 8 + 2], char {0});
+                QCOMPARE(data[frame * 8 + 3], char {0});
+                int16_t left, right;
+                std::memcpy(&left, data.constData() + frame * 8 + 4, 2);
+                std::memcpy(&right, data.constData() + frame * 8 + 6, 2);
+                const auto expected = static_cast<int16_t>((123 + (epoch == 1 ? 1000 : 0) + frame) % 30000);
+                QCOMPARE(left, expected);
+                QCOMPARE(right, expected);
+            }
+        }
+        QVERIFY(!sink->wrongThread);
+    }
+
+    void routedQueueEnforcesPhysicalMemoryLimit()
+    {
+        FakeDeviceCatalogue catalogue;
+        catalogue.entries = {fakePairDevice("interface", {SampleFormat::F32, 768000, 8})};
+        auto library      = std::make_shared<SourceLibrary>();
+        library->plans.insert(u"track.wav"_s, std::make_shared<SourcePlan>());
+        auto sink = std::make_shared<SinkState>();
+        PreviewController controller {
+            [library]() { return std::make_unique<FakeSource>(library); },
+            std::make_unique<QtAudioOutput>(catalogue, "interface", fakeSinkFactory(sink), 7)};
+        controller.previewTrack(Track {u"track.wav"_s});
+        QTRY_COMPARE(controller.snapshot().state, PreviewState::Error);
+        QVERIFY(controller.snapshot().error.contains(u"bounded buffer capacity"));
+        QCOMPARE(sink->starts, 0);
+    }
+
+    void changedPhysicalFormatStopsButAllowsExplicitRecoveryOnSamePair()
+    {
+        FakeDeviceCatalogue catalogue;
+        catalogue.entries = {fakePairDevice("interface", {SampleFormat::S16, 1000, 4})};
+        auto library = std::make_shared<SourceLibrary>();
+        library->plans.insert(u"track.wav"_s, std::make_shared<SourcePlan>());
+        auto sink = std::make_shared<SinkState>();
+        PreviewController controller {[library]() { return std::make_unique<FakeSource>(library); },
+                                      std::make_unique<QtAudioOutput>(catalogue, "interface", fakeSinkFactory(sink), 3)};
+        controller.previewTrack(Track {u"track.wav"_s});
+        QTRY_COMPARE(controller.snapshot().state, PreviewState::Playing);
+        controller.playPause();
+        const auto starts = sink->starts;
+        catalogue.change({fakePairDevice("interface", {SampleFormat::S32, 2000, 4})});
+        QCOMPARE(controller.snapshot().state, PreviewState::Error);
+        QVERIFY(controller.snapshot().deviceAvailable);
+        QCOMPARE(sink->starts, starts);
+        controller.playPause();
+        QTRY_COMPARE(controller.snapshot().state, PreviewState::Playing);
+        QCOMPARE(sink->starts, starts + 1);
+        QCOMPARE(sink->requestedBuffer, qsizetype {3200});
+    }
+
     void formatNegotiationTestsConcreteCandidates()
     {
         const AudioFormat input {SampleFormat::S24In32, 96000, 1};

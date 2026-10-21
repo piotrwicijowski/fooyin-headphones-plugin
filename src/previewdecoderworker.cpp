@@ -72,10 +72,11 @@ void PreviewSession::cancel()
     }
 }
 
-void PreviewSession::approve(const AudioFormat& format)
+void PreviewSession::approve(const AudioFormat& format, int firstChannel)
 {
     const std::lock_guard lock {mutex};
-    outputFormat = format;
+    outputFormat       = format;
+    firstOutputChannel = firstChannel;
     changed.notify_all();
 }
 
@@ -253,7 +254,8 @@ void PreviewDecoderWorker::decode(const std::shared_ptr<PreviewSession>& session
         return;
     }
     PreviewConverter converter;
-    if(!converter.configure(format, *outputFormat, error, session->replayGain.linearGain(session->track))) {
+    if(!converter.configure(format, *outputFormat, error, session->replayGain.linearGain(session->track),
+                            session->firstOutputChannel)) {
         m_failed(session->generation, error);
         return;
     }
