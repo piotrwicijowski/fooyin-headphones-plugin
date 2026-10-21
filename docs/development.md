@@ -84,6 +84,12 @@ ctest --preset test-agent
 
 Alternatively, run `make test FOOYIN_BUILD_DIR=/path/to/fooyin/build`.
 
+Release-helper tests use only Python's standard library:
+
+```sh
+python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+```
+
 | Suite | Coverage |
 | --- | --- |
 | `headphones.plugin-lifecycle` | Load the real module; verify interfaces, registration, partial/duplicate initialisation, widget persistence, and shutdown ordering. |
@@ -108,6 +114,74 @@ The check generates temporary zero/+6 dB header-gain variants, repairs their Ogg
 CRCs, and verifies decoder/header gain with every processing and gain-selection
 mode. It uses the public `InputPlugin` interface and is skipped if these variables
 are absent. The plugin, fixture, and dependencies are test-only inputs.
+
+## Version-tag builds
+
+`.github/workflows/build-tag.yml` builds Linux x86-64 Release artifacts on
+`ubuntu-24.04`. It builds the pinned upstream fooyin Core/Gui/Utils libraries,
+builds the plugin and its tests, runs CTest offscreen, installs into a temporary
+prefix, and checks the installed ELF dependencies and library search paths. The
+packaging helper then loads the plugin extracted from the archive with the
+existing lifecycle test. Successful builds create a GitHub Release for the tag
+with a `.tar.gz` and its SHA-256 checksum attached. Prerelease tags such as
+`v0.2.0-rc.1` create prereleases. Failed runs upload available CMake/CTest
+diagnostics as workflow artifacts for 14 days.
+
+Publishing uses GitHub CLI (`gh`) and the workflow's `GITHUB_TOKEN` with
+`contents: write` permission. New releases receive automatically generated release
+notes. Reruns replace assets with matching filenames on an existing release.
+
+The workflow passes the relative plugin install directory as a CMake `STRING`.
+This preserves staging with `cmake --install --prefix`; an untyped command-line
+override of the project's `PATH` cache entry would become an absolute path.
+
+### Create a version tag
+
+1. Set `project(FooyinHeadphones VERSION ...)` in `CMakeLists.txt` to the intended
+   numeric version and commit the release changes, including the workflow.
+2. Use `vMAJOR.MINOR.PATCH` with optional SemVer prerelease/build suffixes. A tag
+   such as `v0.2.0-rc.1` requires CMake version `0.2.0`. The full tag identifies
+   the artifact; the embedded plugin metadata carries the numeric CMake version.
+3. Validate locally, then create and push the tag. For the current version:
+
+   ```sh
+   python3 .github/scripts/release.py validate --source . --ref refs/tags/v0.1.0
+   git tag -a v0.1.0 -m "Headphones Preview 0.1.0"
+   git push origin v0.1.0
+   ```
+
+4. Open **Actions → Build version tag** and check the test result and release
+   link in the run summary. Download and install the archive into a matching
+   fooyin environment as described in the [README](../README.md#download-a-release).
+
+The push filter accepts tags beginning with `v` and a digit. Strict validation
+rejects malformed SemVer, leading-zero numeric identifiers, and CMake version
+mismatches before checking out/building fooyin. Branch pushes do not run this
+workflow.
+
+### Rerun a tagged build
+
+Use **Re-run jobs** on its Actions run, or dispatch against an existing tag:
+
+```sh
+gh workflow run build-tag.yml --ref v0.1.0
+```
+
+Manual dispatch requires the workflow to exist on the default branch and at the
+selected tag. Dispatching a branch is rejected by version validation. Rerunning
+rebuilds and uploads the release files again. Runner images and apt package
+updates mean the new binary may differ; consult its build metadata.
+
+### Update the fooyin baseline
+
+`FOOYIN_REF` in the workflow pins the full upstream commit SHA. The current
+revision is `bb8d9f0371b254571fffec310dce3ee1ce005c87`; its CMake version is
+`0.13.1`, so the SHA is the precise compatibility identifier. Build both projects
+with the same compiler, Qt, and FFmpeg installation. When changing this pin,
+verify a clean build, all CTest suites, and the packaged lifecycle check, then
+update the compatibility information here. The archive records actual
+versions of the compiler, CMake, Qt, FFmpeg libraries, and other principal
+dependencies in `build-metadata.json`.
 
 ## Same-process integration validation
 

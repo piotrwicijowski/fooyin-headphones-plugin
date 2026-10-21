@@ -4,3 +4,4 @@
 /.cache/
 /.clangd/
 *.user
+__pycache__/

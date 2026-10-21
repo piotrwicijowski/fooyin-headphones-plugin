@@ -27,9 +27,18 @@ track or changing the queue, volume, or output settings.
 The plugin has been validated to work on Linux with fooyin 0.14.0-pre and Qt 6.8.2.
 See [audio routing and troubleshooting](#audio-routing-and-troubleshooting) for known backend limitations.
 
-## Build and install
+## Install
 
-### Requirements
+### Download a release
+
+Download a plugin build from the **Assets** section on the
+[Releases page](https://github.com/piotrwicijowski/fooyin-headphones-plugin/releases).
+
+Extract the download and follow the included installation instructions. Check
+the included compatibility information to ensure the build matches your system
+and fooyin installation.
+
+### Build requirements
 
 - A C++23 compiler compatible with your fooyin build.
 - CMake 3.19+, or 3.20+ for the supplied presets; Ninja for the preset builds.

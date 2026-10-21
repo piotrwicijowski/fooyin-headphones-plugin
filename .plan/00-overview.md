@@ -87,6 +87,7 @@ its own scope, implementation steps, acceptance criteria, and completion status.
 | [09-preview-replaygain.md](09-preview-replaygain.md) | Implemented: preview ReplayGain using fooyin's shared configuration |
 | [10-multichannel-to-stereo.md](10-multichannel-to-stereo.md) | Implemented: channel-layout-aware multichannel input downmixing |
 | [11-output-channel-pair-selection.md](11-output-channel-pair-selection.md) | Route preview to an explicit pair on a multichannel output |
+| [12-version-tag-ci.md](12-version-tag-ci.md) | Implemented: version-tag Linux builds and GitHub Releases; local verification passed, hosted acceptance pending |
 
 ### Original implementation phases
 
