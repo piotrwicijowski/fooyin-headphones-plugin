@@ -47,12 +47,13 @@ and fooyin installation.
   fooyin SDK built with `INSTALL_HEADERS=ON`.
 - FFmpeg 5+ development libraries: `libswresample` 4+ and `libavutil` 57+,
   discoverable through pkg-config or `CMAKE_PREFIX_PATH`.
+- On Linux, the PipeWire client development library (`libpipewire-0.3-dev`).
 
 For Debian 13, the plugin's build dependencies are:
 
 ```sh
 sudo apt install build-essential cmake ninja-build pkg-config \
-  qt6-base-dev qt6-multimedia-dev libswresample-dev libavutil-dev
+  qt6-base-dev qt6-multimedia-dev libswresample-dev libavutil-dev libpipewire-0.3-dev
 ```
 
 Building fooyin itself requires additional dependencies; follow its

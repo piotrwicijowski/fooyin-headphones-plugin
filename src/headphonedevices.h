@@ -8,10 +8,13 @@
 #include <QObject>
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
 namespace Fooyin::Headphones {
+
+class PipewireChannelMaps;
 
 struct HeadphoneDevice
 {
@@ -22,6 +25,7 @@ struct HeadphoneDevice
     QAudioDevice qtDevice; // Only real catalogue entries carry an actual Qt device.
     // Concrete formats with a known, ordered channel map, never inferred from a maximum count.
     std::vector<AudioFormat> pairFormats;
+    bool discreteChannelMap {false}; // Verified numbered AUX slots, not speaker roles.
 };
 
 class HeadphoneDeviceCatalogue : public QObject
@@ -40,16 +44,21 @@ class HeadphoneDevices final : public HeadphoneDeviceCatalogue
 {
 public:
     explicit HeadphoneDevices(QObject* parent = nullptr);
+    ~HeadphoneDevices() override;
     [[nodiscard]] std::vector<HeadphoneDevice> devices() const override;
 
 private:
     QMediaDevices m_mediaDevices;
+    std::unique_ptr<PipewireChannelMaps> m_pipewireMaps;
 };
 
 [[nodiscard]] QString encodeDeviceId(const QByteArray& id);
 [[nodiscard]] QByteArray decodeDeviceId(const QString& encoded);
 [[nodiscard]] QAudioFormat qtPreviewFormat(const AudioFormat& format);
 [[nodiscard]] bool isExplicitPairFormat(const AudioFormat& format, int firstChannel);
+[[nodiscard]] bool isPreviewPairPcmFormat(const AudioFormat& format, int firstChannel);
+[[nodiscard]] std::optional<AudioFormat> pipewirePairFormat(const AudioFormat& preferred,
+                                                            const QStringList& nativePositions);
 [[nodiscard]] std::vector<int> previewChannelPairs(const HeadphoneDevice& device);
 [[nodiscard]] std::optional<AudioFormat> negotiatePreviewFormat(const HeadphoneDevice& device, const AudioFormat& input,
                                                                 int firstChannel = 0);

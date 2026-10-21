@@ -57,7 +57,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config git python3 binutils \
-            qt6-base-dev qt6-multimedia-dev libqt6svg6-dev libqt6sql6-sqlite \
+            qt6-base-dev qt6-multimedia-dev libqt6svg6-dev libqt6sql6-sqlite libpipewire-0.3-dev \
             libtag1-dev libicu-dev zlib1g-dev libarchive-dev \
             libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libswresample-dev
 

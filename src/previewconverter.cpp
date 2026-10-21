@@ -209,7 +209,9 @@ bool PreviewConverter::configure(const AudioFormat& input, const AudioFormat& ph
     reset();
     auto output = physicalOutput;
     if(firstChannel != 0) {
-        if(!isExplicitPairFormat(physicalOutput, firstChannel)) {
+        // Physical slots are already approved by the output catalogue. Their
+        // transport map may be numbered AUX channels, with no speaker roles.
+        if(!isPreviewPairPcmFormat(physicalOutput, firstChannel)) {
             error = u"The selected headphone channel pair or output layout is unavailable."_s;
             return false;
         }

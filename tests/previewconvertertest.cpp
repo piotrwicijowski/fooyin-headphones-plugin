@@ -30,19 +30,32 @@ class PreviewConverterTest : public QObject
 {
     Q_OBJECT
 private Q_SLOTS:
+    void explicitOutputPairsPreserveStereoAndSilenceAcrossConversion_data()
+    {
+        QTest::addColumn<int>("physicalChannels");
+        QTest::addColumn<bool>("discrete");
+        QTest::newRow("7.1-speakers") << 8 << false;
+        QTest::newRow("six-aux-channels") << 6 << true;
+    }
+
     void explicitOutputPairsPreserveStereoAndSilenceAcrossConversion()
     {
+        QFETCH(int, physicalChannels);
+        QFETCH(bool, discrete);
         for(const auto sample : {SampleFormat::F32, SampleFormat::S16, SampleFormat::S32}) {
             for(const int inputChannels : {1, 2, 6}) {
                 for(const int rate : {44100, 48000}) {
                     const AudioFormat input {SampleFormat::F32, 48000, inputChannels};
                     const AudioFormat stereo {sample, rate, 2};
-                    const AudioFormat physical {sample, rate, 8};
+                    AudioFormat physical {sample, rate, physicalChannels};
+                    if(discrete) {
+                        physical.clearChannelLayout();
+                    }
                     std::vector<float> signal(1024 * inputChannels);
                     for(size_t i = 0; i < signal.size(); ++i) {
                         signal[i] = 0.1F * std::sin(static_cast<float>(i) * 0.07F);
                     }
-                    for(const int pair : {1, 3, 5, 7}) {
+                    for(int pair = 1; pair < physicalChannels; pair += 2) {
                         for(const double gain : {1.0, 0.5}) {
                             PreviewConverter logical, routed;
                             QString error;
@@ -56,8 +69,8 @@ private Q_SLOTS:
                                 const size_t frames      = reference.size() / stereo.bytesPerFrame();
                                 QCOMPARE(output.size(), frames * physical.bytesPerFrame());
                                 for(size_t frame = 0; frame < frames; ++frame) {
-                                    for(int channel = 0; channel < 8; ++channel) {
-                                        const size_t offset = (frame * 8 + channel) * sampleBytes;
+                                    for(int channel = 0; channel < physicalChannels; ++channel) {
+                                        const size_t offset = (frame * physicalChannels + channel) * sampleBytes;
                                         if(channel == pair - 1 || channel == pair) {
                                             const size_t source = (frame * 2 + channel - pair + 1) * sampleBytes;
                                             QVERIFY(std::equal(output.begin() + offset,
@@ -100,7 +113,9 @@ private Q_SLOTS:
         }
         auto unknown = wide;
         unknown.clearChannelLayout();
-        QVERIFY(!converter.configure(stereo, unknown, error, 1.0, 3));
+        // Output approval can describe raw numbered AUX slots. This does not
+        // permit unlabelled multichannel *input* or automatic wide output.
+        QVERIFY(converter.configure(stereo, unknown, error, 1.0, 3));
         QVERIFY(!converter.configure(unknown, wide, error, 1.0, 3));
     }
 

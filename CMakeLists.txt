@@ -36,6 +36,7 @@ add_library(HeadphonesPreviewEngine STATIC
     src/previewconverter.h src/previewconverter.cpp
     src/previewreplaygain.h src/previewreplaygain.cpp
     src/headphonedevices.h src/headphonedevices.cpp
+    src/pipewirechannelmaps.h src/pipewirechannelmaps.cpp
     src/headphonessettings.h src/headphonessettings.cpp
     src/qtaudiooutput.h src/qtaudiooutput.cpp
     src/previewpcmbuffer.h src/previewpcmbuffer.cpp
@@ -49,6 +50,12 @@ set_target_properties(HeadphonesPreviewEngine PROPERTIES
 target_include_directories(HeadphonesPreviewEngine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(HeadphonesPreviewEngine PUBLIC Fooyin::Core Qt6::Core Qt6::Multimedia Threads::Threads
     PRIVATE Headphones::swresample Headphones::avutil)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(HEADPHONES_PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
+    target_link_libraries(HeadphonesPreviewEngine PRIVATE PkgConfig::HEADPHONES_PIPEWIRE)
+    target_compile_definitions(HeadphonesPreviewEngine PRIVATE HEADPHONES_HAVE_PIPEWIRE)
+endif()
 target_compile_definitions(HeadphonesPreviewEngine PUBLIC QT_NO_KEYWORDS)
 if(MSVC)
     target_compile_options(HeadphonesPreviewEngine PRIVATE /W4)

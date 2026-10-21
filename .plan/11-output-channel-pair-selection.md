@@ -1,7 +1,7 @@
 # Ticket 11: explicit output channel-pair selection
 
-Status: implemented; Qt/PulseAudio software capture validated. Physical shared-interface
-validation and a Qt 6.4 runtime check remain outstanding.
+Status: implemented; software captures and TP-7 channels 3/4 hardware routing validated.
+Concurrent physical shared-interface validation and a Qt 6.4 runtime check remain outstanding.
 
 ## Implemented experience and feasibility
 
@@ -15,7 +15,9 @@ validation and a Qt 6.4 runtime check remain outstanding.
   or reconnection autoplay. Existing settings migrate to Automatic.
 - Qt's reported channel configuration and a supported concrete format establish
   pair choices, never maximum channel count. The initial implementation supports
-  canonical known layouts up to eight channels; unknown/AUX-only maps are excluded.
+  canonical known layouts up to eight channels. Native Qt PipeWire additionally
+  verifies actual endpoint metadata and supports sequential numbered AUX maps.
+  It must not treat Qt's guessed surround configuration as the endpoint's map.
 - Logical stereo conversion precedes explicit zero-filled physical slot mapping.
   Worker approval, queues, partial writes, sink format, and clocks retain physical
   output frame sizes.
@@ -24,6 +26,15 @@ validation and a Qt 6.4 runtime check remain outstanding.
   for both pairs, and distinct concurrent streams remained on separate pairs.
   Tests include 44.1-to-48 kHz conversion, preview pause/resume and sink replacement.
   See `docs/development.md` for reproduction and the remaining physical checks.
+- A six-channel Pro Audio regression reproduces 5.1-labelled preview being mixed
+  onto AUX0/1. Native metadata discovery and an unknown-layout Qt transport preserve
+  AUX0..AUX5, including pairs 3/4 and 5/6. The private PipeWire/WirePlumber runner
+  validates the converter and transport mapping.
+- User-confirmed hardware validation: teenage engineering TP-7 Pro on Linux/PipeWire
+  with Qt 6.12 routes preview correctly to channels 3/4. Debug output confirms a
+  verified AUX map and a six-channel Float stream at 96 kHz with Qt channel config 0,
+  despite Qt advertising `FL,FR,FC,LFE,BL,BR`. Hardware checks for pair 5/6,
+  concurrent main/preview streams, and routing lifecycle behaviour remain outstanding.
 
 ## Goal and scope
 

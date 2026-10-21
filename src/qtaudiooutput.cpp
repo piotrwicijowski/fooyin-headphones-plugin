@@ -2,6 +2,7 @@
 #include "qtaudiooutput.h"
 
 #include <QAudioSink>
+#include <QLoggingCategory>
 
 #include <algorithm>
 #include <cmath>
@@ -17,6 +18,8 @@ using namespace Qt::StringLiterals;
 
 namespace Fooyin::Headphones {
 namespace {
+Q_LOGGING_CATEGORY(OutputLog, "fy.headphones.output", QtInfoMsg)
+
 class QtSink final : public PreviewAudioSink
 {
 public:
@@ -172,6 +175,12 @@ std::optional<AudioFormat> QtAudioOutput::configure(const AudioFormat& input, QS
         return {};
     }
     m_format = *format;
+    qCDebug(OutputLog) << "Headphone destination:" << device->description << m_selectedId
+                       << "first channel:" << m_firstChannel
+                       << "Qt advertised layout:" << device->preferredFormat.prettyChannelLayout()
+                       << "numbered AUX map:" << device->discreteChannelMap
+                       << "stream format:" << qtPreviewFormat(m_format)
+                       << "Qt channel config:" << qtPreviewFormat(m_format).channelConfig();
     return format;
 }
 

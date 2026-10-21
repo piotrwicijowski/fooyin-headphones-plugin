@@ -20,6 +20,41 @@ class PreviewOutputTest : public QObject
 {
     Q_OBJECT
 private Q_SLOTS:
+    void nativePipewireAuxChannelsMustNotBecomeSurround()
+    {
+        // Qt 6.10+ reports a guessed 5.1 configuration for this actual TP-7
+        // Pro Audio layout. Verify native metadata, then preserve AUX identity.
+        const AudioFormat guessed {SampleFormat::F32, 96000, 6};
+        const QStringList positions {u"AUX0"_s, u"AUX1"_s, u"AUX2"_s, u"AUX3"_s, u"AUX4"_s, u"AUX5"_s};
+        const auto physical = pipewirePairFormat(guessed, positions);
+        QVERIFY(physical);
+        QCOMPARE(physical->channelCount(), 6);
+        QVERIFY(!physical->hasChannelLayout());
+        const auto qt = qtPreviewFormat(*physical);
+        QCOMPARE(qt.channelCount(), 6);
+        QCOMPARE(qt.channelConfig(), QAudioFormat::ChannelConfigUnknown);
+        QVERIFY(qtPreviewFormat(guessed).channelConfig() != QAudioFormat::ChannelConfigUnknown);
+        auto device        = fakeDevice("tp7", {*physical});
+        device.pairFormats = {*physical};
+        QVERIFY(previewChannelPairs(device).empty()); // Raw slots need independently verified metadata.
+        device.discreteChannelMap = true;
+        QCOMPARE(previewChannelPairs(device), (std::vector<int> {1, 3, 5}));
+        for(const int pair : {1, 3, 5}) {
+            QCOMPARE(negotiatePreviewFormat(device, {SampleFormat::F32, 44100, 2}, pair), physical);
+        }
+        QVERIFY(!negotiatePreviewFormat(device, {SampleFormat::F32, 44100, 2}, 7));
+        auto reordered = positions;
+        std::swap(reordered[0], reordered[1]);
+        QVERIFY(!pipewirePairFormat(guessed, reordered));
+        auto incomplete = positions;
+        incomplete.removeLast();
+        QVERIFY(!pipewirePairFormat(guessed, incomplete));
+        QVERIFY(!pipewirePairFormat(guessed, {}));
+        QVERIFY(!pipewirePairFormat(guessed, {u"FL"_s, u"FR"_s, u"AUX2"_s, u"AUX3"_s, u"AUX4"_s, u"AUX5"_s}));
+        QCOMPARE(pipewirePairFormat(guessed, {u"FL"_s, u"FR"_s, u"FC"_s, u"LFE"_s, u"RL"_s, u"RR"_s}),
+                 std::optional {guessed});
+    }
+
     void explicitPairsRequireConcreteKnownFormats()
     {
         const AudioFormat input {SampleFormat::F32, 44100, 2};
@@ -116,10 +151,30 @@ private Q_SLOTS:
         QCOMPARE(settings.outputChannelPair(), -1);
     }
 
+    void routedWorkerPreservesIsolationAcrossShortWritesPauseSeekAndReplacement_data()
+    {
+        QTest::addColumn<int>("channels");
+        QTest::addColumn<int>("pair");
+        QTest::addColumn<bool>("discrete");
+        QTest::newRow("quad-3-4") << 4 << 3 << false;
+        QTest::newRow("aux-3-4") << 6 << 3 << true;
+        QTest::newRow("aux-5-6") << 6 << 5 << true;
+    }
+
     void routedWorkerPreservesIsolationAcrossShortWritesPauseSeekAndReplacement()
     {
+        QFETCH(int, channels);
+        QFETCH(int, pair);
+        QFETCH(bool, discrete);
+        AudioFormat physical {SampleFormat::S16, 1000, channels};
+        if(discrete) {
+            physical.clearChannelLayout();
+        }
+        auto device = fakePairDevice("interface", physical);
+        device.discreteChannelMap = discrete;
+        const int frameBytes = physical.bytesPerFrame();
         FakeDeviceCatalogue catalogue;
-        catalogue.entries = {fakePairDevice("interface", {SampleFormat::S16, 1000, 4})};
+        catalogue.entries = {device};
         auto library      = std::make_shared<SourceLibrary>();
         auto plan         = std::make_shared<SourcePlan>();
         plan->format      = {SampleFormat::S16, 1000, 2};
@@ -129,9 +184,9 @@ private Q_SLOTS:
         sink->maxWrite = 4093; // Deliberately splits physical frames and sample containers.
         PreviewController controller {
             [library]() { return std::make_unique<FakeSource>(library); },
-            std::make_unique<QtAudioOutput>(catalogue, "interface", fakeSinkFactory(sink), 3)};
+            std::make_unique<QtAudioOutput>(catalogue, "interface", fakeSinkFactory(sink), pair)};
         controller.previewTrack(Track {u"track.wav"_s});
-        QTRY_VERIFY(!sink->epochs.empty() && sink->epochs.back().size() >= 8);
+        QTRY_VERIFY(!sink->epochs.empty() && sink->epochs.back().size() >= frameBytes);
         controller.playPause();
         QCOMPARE(controller.snapshot().state, PreviewState::Paused);
         const auto bytes = sink->epochs.back().size();
@@ -142,30 +197,32 @@ private Q_SLOTS:
         const auto starts = sink->starts;
         controller.playPause();
         QTRY_COMPARE(sink->starts, starts + 1);
-        QTRY_VERIFY(sink->epochs.back().size() >= 8);
+        QTRY_VERIFY(sink->epochs.back().size() >= frameBytes);
         controller.stop();
         controller.previewTrack(Track {u"track.wav"_s});
         QTRY_COMPARE(sink->starts, starts + 2);
-        QTRY_VERIFY(sink->epochs.back().size() >= 8);
+        QTRY_VERIFY(sink->epochs.back().size() >= frameBytes);
         controller.playPause();
         catalogue.change({fakeDevice("interface")});
         QCOMPARE(controller.snapshot().state, PreviewState::Error);
         QVERIFY(!controller.snapshot().deviceAvailable);
-        catalogue.change({fakePairDevice("interface", {SampleFormat::S16, 1000, 4})});
+        catalogue.change({device});
         QVERIFY(controller.snapshot().deviceAvailable);
         QCOMPARE(controller.snapshot().state, PreviewState::Error);
         QCOMPARE(sink->starts, starts + 2);
         QCOMPARE(sink->epochs.size(), size_t {3});
         for(size_t epoch = 0; epoch < sink->epochs.size(); ++epoch) {
             const auto& data = sink->epochs[epoch];
-            for(qsizetype frame = 0; frame < data.size() / 8; ++frame) {
-                QCOMPARE(data[frame * 8], char {0});
-                QCOMPARE(data[frame * 8 + 1], char {0});
-                QCOMPARE(data[frame * 8 + 2], char {0});
-                QCOMPARE(data[frame * 8 + 3], char {0});
+            for(qsizetype frame = 0; frame < data.size() / frameBytes; ++frame) {
+                for(int channel = 0; channel < channels; ++channel) {
+                    if(channel != pair - 1 && channel != pair) {
+                        QCOMPARE(data[frame * frameBytes + channel * 2], char {0});
+                        QCOMPARE(data[frame * frameBytes + channel * 2 + 1], char {0});
+                    }
+                }
                 int16_t left, right;
-                std::memcpy(&left, data.constData() + frame * 8 + 4, 2);
-                std::memcpy(&right, data.constData() + frame * 8 + 6, 2);
+                std::memcpy(&left, data.constData() + frame * frameBytes + (pair - 1) * 2, 2);
+                std::memcpy(&right, data.constData() + frame * frameBytes + pair * 2, 2);
                 const auto expected = static_cast<int16_t>((123 + (epoch == 1 ? 1000 : 0) + frame) % 30000);
                 QCOMPARE(left, expected);
                 QCOMPARE(right, expected);

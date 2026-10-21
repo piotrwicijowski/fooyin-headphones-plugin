@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "headphonedevices.h"
 
+#include "pipewirechannelmaps.h"
 #include "previewconverter.h"
 
 #include <QAudioFormat>
+#include <QVersionNumber>
 
 #include <algorithm>
 #include <array>
+
+using namespace Qt::StringLiterals;
 
 namespace Fooyin::Headphones {
 namespace {
@@ -24,6 +28,24 @@ constexpr std::array Positions {
     std::pair {Position::SideLeft, QAudioFormat::SideLeft},
     std::pair {Position::SideRight, QAudioFormat::SideRight},
 };
+
+bool isNativePipewire()
+{
+#ifdef Q_OS_LINUX
+    const auto backend = qgetenv("QT_AUDIO_BACKEND");
+    // A plugin compiled against older Qt can run on a newer Qt runtime.
+    return QVersionNumber::fromString(QString::fromLatin1(qVersion())) >= QVersionNumber {6, 10}
+        && (backend.isNull() || backend == "pipewire");
+#else
+    return false;
+#endif
+}
+
+bool isDevicePairFormat(const HeadphoneDevice& device, const AudioFormat& format, int first)
+{
+    return device.discreteChannelMap ? !format.hasChannelLayout() && isPreviewPairPcmFormat(format, first)
+                                     : isExplicitPairFormat(format, first);
+}
 } // namespace
 
 QAudioFormat qtPreviewFormat(const AudioFormat& format)
@@ -114,7 +136,19 @@ HeadphoneDevices::HeadphoneDevices(QObject* parent)
     : HeadphoneDeviceCatalogue {parent}
 {
     QObject::connect(&m_mediaDevices, &QMediaDevices::audioOutputsChanged, this, &HeadphoneDevices::devicesChanged);
+    if(isNativePipewire()) {
+        m_pipewireMaps = std::make_unique<PipewireChannelMaps>();
+        if(!m_pipewireMaps->isConnected()) {
+            // Qt falls back to PulseAudio when no native PipeWire server exists.
+            m_pipewireMaps.reset();
+            return;
+        }
+        QObject::connect(m_pipewireMaps.get(), &PipewireChannelMaps::mapsChanged, this,
+                         &HeadphoneDevices::devicesChanged);
+    }
 }
+
+HeadphoneDevices::~HeadphoneDevices() = default;
 
 std::vector<HeadphoneDevice> HeadphoneDevices::devices() const
 {
@@ -133,13 +167,19 @@ std::vector<HeadphoneDevice> HeadphoneDevices::devices() const
                                device,
                                {}};
         auto mapped = device.preferredFormat();
-        // The reported configuration, not a default surround layout or max count,
-        // establishes which channels this endpoint actually describes.
+        // Qt supplies a concrete PCM candidate. Its mask can be guessed on
+        // native PipeWire, so verify the actual endpoint map below.
         if(device.channelConfiguration() != QAudioFormat::ChannelConfigUnknown) {
             mapped.setChannelConfig(device.channelConfiguration());
-            const auto candidate = fooyinFormat(mapped);
-            if(candidate.channelCount() > 2 && isExplicitPairFormat(candidate, 1) && entry.supportsFormat(candidate)) {
-                entry.pairFormats.push_back(candidate);
+            auto candidate = std::optional {fooyinFormat(mapped)};
+            if(m_pipewireMaps) {
+                const auto positions     = m_pipewireMaps->positions(device.id());
+                candidate                = positions ? pipewirePairFormat(*candidate, *positions) : std::nullopt;
+                entry.discreteChannelMap = candidate && !candidate->hasChannelLayout();
+            }
+            if(candidate && candidate->channelCount() > 2 && isDevicePairFormat(entry, *candidate, 1)
+               && entry.supportsFormat(*candidate)) {
+                entry.pairFormats.push_back(*candidate);
             }
         }
         result.push_back(std::move(entry));
@@ -160,11 +200,58 @@ QByteArray decodeDeviceId(const QString& encoded)
 
 bool isExplicitPairFormat(const AudioFormat& format, int firstChannel)
 {
-    return format.isValid() && format.sampleRate() <= 768000 && format.channelCount() <= 8 && format.hasChannelLayout()
-        && firstChannel > 0 && firstChannel % 2 == 1 && firstChannel < format.channelCount()
-        && qtPreviewFormat(format).isValid()
+    return isPreviewPairPcmFormat(format, firstChannel) && format.hasChannelLayout()
+        && qtPreviewFormat(format).isValid();
+}
+
+bool isPreviewPairPcmFormat(const AudioFormat& format, int firstChannel)
+{
+    return format.isValid() && format.sampleRate() <= 768000 && format.channelCount() <= 8 && firstChannel > 0
+        && firstChannel % 2 == 1 && firstChannel < format.channelCount()
         && (format.sampleFormat() == SampleFormat::F32 || format.sampleFormat() == SampleFormat::S16
             || format.sampleFormat() == SampleFormat::S32);
+}
+
+std::optional<AudioFormat> pipewirePairFormat(const AudioFormat& preferred, const QStringList& nativePositions)
+{
+    if(nativePositions.size() != preferred.channelCount() || !isPreviewPairPcmFormat(preferred, 1)) {
+        return {};
+    }
+    bool auxiliary = true;
+    for(int channel = 0; channel < nativePositions.size(); ++channel) {
+        auxiliary = auxiliary && nativePositions[channel] == QStringLiteral("AUX%1").arg(channel);
+    }
+    if(auxiliary) {
+        auto discrete = preferred;
+        discrete.clearChannelLayout();
+        // Native Qt PipeWire maps ChannelConfigUnknown to AUX0..N. Retaining
+        // Qt's guessed 5.1 config instead downmixes this stream onto AUX0/1.
+        return discrete;
+    }
+    // These are the speaker configurations Qt's native PipeWire backend
+    // actually transmits; other masks are translated to AUX by that backend.
+    static const QList<QStringList> speakerMaps {
+        {u"FL"_s, u"FR"_s},
+        {u"FL"_s, u"FR"_s, u"LFE"_s},
+        {u"FL"_s, u"FR"_s, u"FC"_s},
+        {u"FL"_s, u"FR"_s, u"FC"_s, u"LFE"_s},
+        {u"FL"_s, u"FR"_s, u"FC"_s, u"RL"_s, u"RR"_s},
+        {u"FL"_s, u"FR"_s, u"FC"_s, u"LFE"_s, u"RL"_s, u"RR"_s},
+        {u"FL"_s, u"FR"_s, u"FC"_s, u"RL"_s, u"RR"_s, u"SL"_s, u"SR"_s},
+        {u"FL"_s, u"FR"_s, u"FC"_s, u"LFE"_s, u"RL"_s, u"RR"_s, u"SL"_s, u"SR"_s},
+    };
+    static const std::array<const char*, Positions.size()> names {"FL",  "FR",  "FC", "LFE", "RL", "RR",
+                                                                  "FLC", "FRC", "RC", "SL",  "SR"};
+    QStringList transmitted;
+    for(const auto position : preferred.channelLayoutView()) {
+        const auto found = std::ranges::find(Positions, position, &decltype(Positions)::value_type::first);
+        if(found == Positions.end()) {
+            return {};
+        }
+        transmitted.push_back(QString::fromLatin1(names[static_cast<size_t>(found - Positions.begin())]));
+    }
+    return speakerMaps.contains(nativePositions) && transmitted == nativePositions ? std::optional {preferred}
+                                                                                   : std::nullopt;
 }
 
 std::vector<int> previewChannelPairs(const HeadphoneDevice& device)
@@ -172,7 +259,7 @@ std::vector<int> previewChannelPairs(const HeadphoneDevice& device)
     std::vector<int> pairs;
     for(int first = 1; first < 8; first += 2) {
         if(device.supportsFormat && std::ranges::any_of(device.pairFormats, [&](const auto& format) {
-               return isExplicitPairFormat(format, first) && device.supportsFormat(format);
+               return isDevicePairFormat(device, format, first) && device.supportsFormat(format);
            })) {
             pairs.push_back(first);
         }
@@ -188,7 +275,7 @@ std::optional<AudioFormat> negotiatePreviewFormat(const HeadphoneDevice& device,
     }
     if(firstChannel != 0) {
         for(const auto& candidate : device.pairFormats) {
-            if(isExplicitPairFormat(candidate, firstChannel) && device.supportsFormat(candidate)) {
+            if(isDevicePairFormat(device, candidate, firstChannel) && device.supportsFormat(candidate)) {
                 return candidate;
             }
         }

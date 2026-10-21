@@ -274,19 +274,41 @@ stereo from 44.1 kHz. The public APIs used (`channelConfiguration`, `channelConf
 a Qt 6.4 runtime has not been tested. Sink creation alone is not routing evidence:
 the monitor capture establishes the delivered software mapping.
 
-The real catalogue offers pairs only for an endpoint's reported known configuration,
-with a concrete supported preferred-rate/sample-format candidate. It does not
-derive a surround configuration from maximum channel count. Unknown/AUX positions,
-permuted layouts that Qt's mask cannot preserve, and layouts wider than eight
-channels are excluded. Concrete format support and selected pair membership are
-checked again on configuration, sink open, and catalogue changes.
+The real catalogue offers pairs only with a concrete supported format and a
+verified map. With native Qt PipeWire (Qt 6.10+ at runtime), a read-only native
+registry connection discovers the endpoint's actual `audio.position` metadata.
+Qt can advertise a guessed 5.1 layout for a Pro Audio device whose real channels
+are `AUX0..AUX5`; transmitting that surround layout makes PipeWire mix the preview
+onto AUX0/1. Sequential AUX layouts instead use a count-only, unknown-layout Qt
+format, which the native Qt backend transmits as AUX channels. Conversion still
+produces stereo first, then copies it into the selected numbered slots.
+
+The six-channel Pro Audio regression runner creates a private PipeWire/WirePlumber
+session with `AUX0..AUX5`, reproduces the old 5.1-to-first-pair remapping, then
+checks pairs 1/2, 3/4, 5/6 and concurrent streams. It exercises the native metadata
+reader, Qt format construction, and actual converter, using `pw-cat` transport so
+it also runs on older Qt builds:
+
+```sh
+python3 tests/run-pipewire-aux-validation.py
+```
+
+Add `--qt-output` when built/running with Qt 6.10+ to use real native `QAudioSink`
+playback for the corrected cases. The runner requires PipeWire, WirePlumber,
+`pw-cat`, `pactl`, and `parec`; `--artifacts` retains captures and `report.json`.
+The protocol regression was validated with Qt 6.8.2, PipeWire 1.4.2, and
+WirePlumber 0.5.8.
+
+To inspect routing in a live session, run `pactl list sink-inputs` during preview
+and compare the preview stream's channel map with `pactl list sinks`. Debug logs
+from `QT_LOGGING_RULES='fy.headphones*.debug=true'` also show the selected pair,
+Qt-advertised layout, whether a verified numbered AUX map is in use, and the
+requested Qt stream format/configuration.
 
 For physical validation, configure the interface's exposed multichannel profile,
 set fooyin's main pair separately (e.g. 1/2), and select the preview pair (e.g. 3/4).
 Confirm the actual connectors with independently identifiable main/preview audio,
-then exercise pause, seek, replacement, stop, and disconnect. PipeWire Pro Audio
-profiles using AUX channel maps, hardware connector numbering, and concurrent
-fooyin main/preview output on a physical shared interface remain unverified.
+then exercise pause, seek, replacement, stop, and disconnect.
 
 ### Manual integration-driver launch
 
