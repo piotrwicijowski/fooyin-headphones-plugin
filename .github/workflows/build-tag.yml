@@ -24,7 +24,7 @@ jobs:
   linux:
     name: Linux x86-64 (Ubuntu 24.04)
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash
@@ -51,6 +51,9 @@ jobs:
           path: fooyin
           submodules: recursive
           persist-credentials: false
+
+      - name: Inspect APT configuration
+        run: sudo apt-config dump
 
       - name: Install build dependencies
         run: |
