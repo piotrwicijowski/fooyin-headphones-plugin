@@ -1,6 +1,6 @@
 {
     "Name": "Headphones Preview",
-    "Version": "@PROJECT_VERSION@",
+    "Version": "v0.1",
     "Author": "",
     "Category": "Playback",
     "Description": "Independent headphone preview with track actions, transport panel and explicit device settings",

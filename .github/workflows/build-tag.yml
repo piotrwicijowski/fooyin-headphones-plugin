@@ -16,8 +16,8 @@ concurrency:
 env:
   CC: gcc-13
   CXX: g++-13
-  # Upstream development revision; CMake reports 0.13.1. The SHA defines compatibility.
-  FOOYIN_REF: bb8d9f0371b254571fffec310dce3ee1ce005c87
+  # Upstream fooyin v0.14.0 release commit.
+  FOOYIN_REF: 4cb697bd19cfde409afca420b84d15bccc1ffb1e
   QT_QPA_PLATFORM: offscreen
 
 jobs:
