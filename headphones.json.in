@@ -1,9 +1,9 @@
 {
     "Name": "Headphones Preview",
-    "Version": "v0.1",
-    "Author": "",
+    "Version": "@PROJECT_VERSION@",
+    "Author": "piotrwicijowski",
     "Category": "Playback",
     "Description": "Independent headphone preview with track actions, transport panel and explicit device settings",
     "License": "GPL-3.0-or-later",
-    "Url": ""
+    "Url": "https://github.com/piotrwicijowski/fooyin-headphones-plugin"
 }

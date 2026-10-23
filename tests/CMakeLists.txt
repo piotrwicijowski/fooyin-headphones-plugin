@@ -7,6 +7,14 @@ add_test(NAME headphones.plugin-lifecycle
 set_tests_properties(headphones.plugin-lifecycle PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
+# Release-only probe for the host installer, which is not part of the public SDK.
+# The plugin itself continues to use public fooyin headers exclusively.
+if(FOOYIN_FORCE_DEV_TREE AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(pluginbundlecheck pluginbundlecheck.cpp)
+    target_include_directories(pluginbundlecheck PRIVATE "${FOOYIN_SRC_DIR}/src/core/plugins")
+    target_link_libraries(pluginbundlecheck PRIVATE Fooyin::Core Qt6::Core)
+endif()
+
 add_executable(previewenginetest previewenginetest.cpp fakes/previewfakes.h)
 target_link_libraries(previewenginetest PRIVATE HeadphonesPreviewEngine Qt6::Test)
 add_test(NAME headphones.preview-engine COMMAND previewenginetest)

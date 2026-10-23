@@ -11,8 +11,8 @@ import platform
 import re
 import shutil
 import subprocess
-import tarfile
 import tempfile
+import zipfile
 
 
 NUMBER = r"(?:0|[1-9][0-9]*)"
@@ -117,7 +117,7 @@ def package(args):
     runtime["LD_LIBRARY_PATH"] = str(fooyin_build / "run/lib/fooyin")
 
     args.output.mkdir(parents=True, exist_ok=True)
-    archive = args.output / f"{artifact}.tar.gz"
+    archive = args.output / f"{artifact}.zip"
     with tempfile.TemporaryDirectory(prefix="headphones-package-", dir=build.parent) as temporary:
         temporary = Path(temporary)
         stage = temporary / artifact
@@ -133,11 +133,16 @@ def package(args):
             if "(RPATH)" in line or "(RUNPATH)" in line:
                 if str(build.parent) in line or str(fooyin_build) in line or str(source) in line:
                     raise ValueError(f"Installed plugin leaks a workspace library path: {line}")
-        shutil.copy2(source / "LICENSE", stage / "LICENSE")
-        (stage / "build-metadata.json").write_text(metadata_text)
-        (stage / "dependencies.txt").write_text(dependencies + "\n")
-        (stage / "elf-dynamic.txt").write_text(dynamic + "\n")
-        (stage / "INSTALL.txt").write_text(
+        # fooyin strips the platform directory when installing a ZIP bundle.
+        # An archive-name wrapper or an install-prefix layout is rejected.
+        bundle = temporary / "bundle"
+        (bundle / "linux-x64").mkdir(parents=True)
+        shutil.copy2(plugin, bundle / "linux-x64/fyplugin_headphones.so")
+        shutil.copy2(source / "LICENSE", bundle / "LICENSE")
+        (bundle / "build-metadata.json").write_text(metadata_text)
+        (bundle / "dependencies.txt").write_text(dependencies + "\n")
+        (bundle / "elf-dynamic.txt").write_text(dynamic + "\n")
+        (bundle / "INSTALL.txt").write_text(
             f"Headphones Preview {tag}\n\n"
             f"Built for {metadata['os']} x86-64, fooyin commit {fooyin_commit}\n"
             f"(fooyin project version {metadata['fooyin_version']}), Qt {metadata['libraries']['Qt6Core']}, "
@@ -148,24 +153,28 @@ def package(args):
             "the required shared libraries are listed in dependencies.txt.\n\n"
             "Choose the archive for your distribution. Arch Linux builds target the\n"
             "fully updated rolling distribution at the recorded build time.\n\n"
-            f"1. Verify: sha256sum -c {artifact}.tar.gz.sha256\n"
-            f"2. Extract: tar -xzf {artifact}.tar.gz\n"
-            "3. Close fooyin and copy lib/fooyin/plugins/fyplugin_headphones.so from\n"
-            "   the extracted directory to <fooyin-prefix>/lib/fooyin/plugins/.\n"
-            "   Alternatively, set FOOYIN_PLUGIN_PATH to the extracted lib/fooyin/plugins\n"
-            "   directory when launching the matching fooyin executable.\n"
-            "4. Restart fooyin and configure Headphones Preview's output device.\n\n"
+            f"1. Verify: sha256sum -c {artifact}.zip.sha256\n"
+            "2. In fooyin, open Settings > Plugins > Install and select the ZIP file\n"
+            "   directly, without extracting it.\n"
+            "3. Restart fooyin when prompted and configure Headphones Preview's output device.\n\n"
+            "If you previously copied the plugin manually, close fooyin and remove the\n"
+            "old loose fyplugin_headphones.so before installing this bundle.\n\n"
+            "For manual installation, extract the ZIP and copy linux-x64/fyplugin_headphones.so\n"
+            "to <fooyin-prefix>/lib/fooyin/plugins/ with fooyin closed. Alternatively, set\n"
+            "FOOYIN_PLUGIN_PATH to the extracted linux-x64 directory when launching fooyin.\n\n"
             "Install Qt Multimedia's platform audio backend for actual playback.\n"
         )
-        with tarfile.open(archive, "w:gz") as tar:
-            tar.add(stage, arcname=artifact)
-        # Exercise the installed binary after an archive round trip, not just the build-tree module.
-        extracted = temporary / "extracted"
-        with tarfile.open(archive) as tar:
-            tar.extractall(extracted, filter="data")
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zipped:
+            for path in sorted(bundle.rglob("*")):
+                if path.is_file():
+                    zipped.write(path, arcname=path.relative_to(bundle).as_posix())
+        # Use the host's real installer: extraction alone misses layout/metadata errors.
+        installed_plugin = run(
+            str(build / "tests/pluginbundlecheck"), str(archive.resolve()), str(temporary / "installed"),
+            env=runtime,
+        )
         subprocess.run(
-            [str(build / "tests/pluginlifecycletest"),
-             str(extracted / artifact / "lib/fooyin/plugins/fyplugin_headphones.so")],
+            [str(build / "tests/pluginlifecycletest"), installed_plugin],
             env=runtime, check=True, timeout=60,
         )
 
@@ -187,7 +196,7 @@ def publish(args):
         metadata = json.loads(manifest.read_text())
         if metadata["tag"] != tag:
             raise ValueError("Packaged build does not match the release tag.")
-        archive = manifest.parent / f"{metadata['artifact']}.tar.gz"
+        archive = manifest.parent / f"{metadata['artifact']}.zip"
         for filename in (archive, Path(str(archive) + ".sha256")):
             if not filename.is_file() or filename.stat().st_size == 0:
                 raise ValueError(f"Release asset is missing or empty: {filename}")

@@ -130,11 +130,14 @@ toolchain. Arch performs a full `pacman -Syu` upgrade before installing build
 dependencies. Each job builds the pinned upstream fooyin Core/Gui/Utils libraries,
 builds the plugin and its tests, runs CTest offscreen, installs into a temporary
 prefix, and checks the installed ELF dependencies and library search paths. The
-packaging helper then loads the plugin extracted from the archive with the
-existing lifecycle test.
+packaging helper then installs the ZIP through the matching fooyin's actual
+`PluginInstaller` using a test-only probe and temporary plugin directory, and
+loads the installed plugin with the existing lifecycle test. The probe is built
+only for Linux development-tree builds with tests; it accesses host-internal
+installer headers without adding private dependencies to the plugin itself.
 
 After all matrix jobs pass, a single publishing job creates the GitHub Release
-with one distribution-labelled `.tar.gz` and SHA-256 checksum per target. This
+with one distribution-labelled `.zip` and SHA-256 checksum per target. This
 avoids parallel release-creation races. Prerelease tags such as `v0.2.0-rc.1`
 create prereleases. Successful jobs retain their release files as workflow
 artifacts for 14 days; failed jobs upload available CMake/CTest diagnostics under
@@ -148,6 +151,40 @@ notes. Reruns replace assets with matching filenames on an existing release.
 The workflow passes the relative plugin install directory as a CMake `STRING`.
 This preserves staging with `cmake --install --prefix`; an untyped command-line
 override of the project's `PATH` cache entry would become an absolute path.
+
+### ZIP bundle format
+
+fooyin v0.14.0 accepts ZIP archives with either a `.zip` or `.fyplugin` extension.
+The Linux x86-64 release ZIP contains these paths directly, without an outer
+archive-name directory:
+
+```text
+linux-x64/fyplugin_headphones.so
+LICENSE
+INSTALL.txt
+build-metadata.json
+dependencies.txt
+elf-dynamic.txt
+```
+
+The installer selects the `linux-x64/` payload and strips that prefix when
+installing. Platform names use `x64`, not `x86_64`. Root-level documentation is
+allowed, as is a `licenses/` tree. Arbitrary top-level subdirectories such as
+`lib/fooyin/plugins/` or a release-name wrapper are rejected. A root-level plugin
+alone is insufficient: a matching platform payload must be present. ZIPs use
+standard Deflate compression and contain regular files.
+
+There is no external plugin manifest. The installer reads the embedded Qt plugin
+metadata and requires exactly one compatible fooyin plugin with a nonempty
+version and valid identifier. fooyin derives the identifier from
+`Author.Name`, lowercases it, and removes spaces; it must match
+`^[a-z0-9][a-z0-9._-]*$`. Headphones therefore supplies a nonempty author and
+configures its embedded version from `PROJECT_VERSION`.
+
+Install the release ZIP directly through **Settings → Plugins → Install** and
+restart when prompted. For manual installation, the binary is under
+`linux-x64/`, rather than the CMake install-prefix layout. Existing loose copies
+of the plugin should be removed before switching to managed ZIP installation.
 
 ### Create a version tag
 

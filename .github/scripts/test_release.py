@@ -1,13 +1,14 @@
 """Check version validation, distribution packaging, and GitHub CLI publishing."""
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import subprocess
-import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
+import zipfile
 
 from release import distribution_target, package, publish, validate_version
 
@@ -95,6 +96,14 @@ class DistributionPackagingTest(unittest.TestCase):
                     return "libswresample.so.6 => /usr/lib/libswresample.so.6"
                 if command[0] == "readelf":
                     return "(RUNPATH) Library runpath: [$ORIGIN/..]"
+                if command[0] == str(build / "tests/pluginbundlecheck"):
+                    archive, destination = Path(command[1]), Path(command[2])
+                    self.assertEqual(archive.suffix, ".zip")
+                    plugin = destination / "piotrwicijowski.headphonespreview/fyplugin_headphones.so"
+                    plugin.parent.mkdir(parents=True)
+                    with zipfile.ZipFile(archive) as zipped:
+                        plugin.write_bytes(zipped.read("linux-x64/fyplugin_headphones.so"))
+                    return str(plugin)
                 return "test version"
 
             def fake_subprocess(command, **kwargs):
@@ -127,13 +136,23 @@ class DistributionPackagingTest(unittest.TestCase):
                         self.assertIn(f"-linux-x86_64-{target}-fooyin-", metadata["artifact"])
                         self.assertIn("libpipewire-0.3", metadata["libraries"])
                         self.assertTrue(metadata["built_at"])
-                        archive = args.output / f"{metadata['artifact']}.tar.gz"
-                        self.assertTrue(Path(str(archive) + ".sha256").is_file())
-                        with tarfile.open(archive) as tar:
-                            stream = tar.extractfile(f"{metadata['artifact']}/INSTALL.txt")
-                            assert stream is not None
-                            notes = stream.read().decode()
+                        archive = args.output / f"{metadata['artifact']}.zip"
+                        checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+                        self.assertEqual(
+                            Path(str(archive) + ".sha256").read_text(), f"{checksum}  {archive.name}\n"
+                        )
+                        with zipfile.ZipFile(archive) as zipped:
+                            self.assertEqual(set(zipped.namelist()), {
+                                "linux-x64/fyplugin_headphones.so", "LICENSE", "INSTALL.txt",
+                                "build-metadata.json", "dependencies.txt", "elf-dynamic.txt",
+                            })
+                            self.assertEqual(zipped.testzip(), None)
+                            self.assertEqual(zipped.read("linux-x64/fyplugin_headphones.so"), b"test plugin")
+                            self.assertEqual(json.loads(zipped.read("build-metadata.json")), metadata)
+                            notes = zipped.read("INSTALL.txt").decode()
                         self.assertIn(f"Built for {os_release['PRETTY_NAME']} x86-64", notes)
+                        self.assertIn("Settings > Plugins > Install", notes)
+                        self.assertIn(f"{metadata['artifact']}.zip.sha256", notes)
                 # Each target is installed and lifecycle-checked after extraction.
                 self.assertEqual(commands.call_count, 6)
 
@@ -144,7 +163,7 @@ class ReleasePublishingTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
         (self.directory / "CMakeLists.txt").write_text("project(FooyinHeadphones VERSION 0.1.0)\n")
-        self.archive = self.directory / "headphones-test.tar.gz"
+        self.archive = self.directory / "headphones-test.zip"
         self.archive.write_bytes(b"test archive")
         Path(str(self.archive) + ".sha256").write_text("test checksum")
         self.args = argparse.Namespace(
@@ -198,7 +217,7 @@ class ReleasePublishingTest(unittest.TestCase):
             (directory / "build-metadata.json").write_text(
                 json.dumps({"tag": self.args.tag, "artifact": artifact})
             )
-            for suffix in (".tar.gz", ".tar.gz.sha256"):
+            for suffix in (".zip", ".zip.sha256"):
                 asset = directory / f"{artifact}{suffix}"
                 asset.write_bytes(b"test asset")
                 expected.append(str(asset))
@@ -220,7 +239,7 @@ class ReleasePublishingTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "does not match"):
             publish(self.args)
         manifest.write_text(json.dumps({"tag": "v0.1.0", "artifact": "headphones-test"}))
-        (directory / "headphones-test.tar.gz").write_bytes(b"duplicate")
+        (directory / "headphones-test.zip").write_bytes(b"duplicate")
         with self.assertRaisesRegex(ValueError, "Duplicate release asset"):
             publish(self.args)
         self.gh.assert_not_called()

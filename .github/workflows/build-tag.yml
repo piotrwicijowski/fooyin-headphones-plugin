@@ -157,7 +157,7 @@ jobs:
                   f"- Build: {metadata['os']} / {metadata['architecture']} / Release\n"
                   f"- fooyin: `{metadata['fooyin_commit']}` ({metadata['fooyin_version']})\n"
                   f"- Qt: {metadata['libraries']['Qt6Core']}\n"
-                  f"- Tests: CTest passed; packaged plugin lifecycle check passed\n"
+                  f"- Tests: CTest passed; ZIP installation and installed plugin lifecycle checks passed\n"
               )
           PY
 

@@ -91,6 +91,7 @@ private Q_SLOTS:
         const auto metadata = loader.metaData().value(u"MetaData"_s).toObject();
         QCOMPARE(metadata.value(u"Name"_s).toString(), u"Headphones Preview"_s);
         QVERIFY(!metadata.value(u"Version"_s).toString().isEmpty());
+        QVERIFY(!metadata.value(u"Author"_s).toString().isEmpty());
         auto* root = loader.instance();
         QVERIFY2(root, qPrintable(loader.errorString()));
         auto* plugin = qobject_cast<Plugin*>(root);
