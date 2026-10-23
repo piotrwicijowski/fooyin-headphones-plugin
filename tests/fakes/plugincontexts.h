@@ -10,7 +10,7 @@ namespace Fooyin::Headphones::Tests {
 // playback, decoder, settings or GUI dependencies, or construct audio resources.
 inline CorePluginContext coreContext()
 {
-    return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, {}, {}, nullptr, {}};
+    return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, {}, {}, nullptr, {}, {}, nullptr};
 }
 
 inline GuiPluginContext guiContext()
