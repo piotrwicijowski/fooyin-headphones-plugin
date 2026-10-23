@@ -1,14 +1,15 @@
-"""Check version validation and the GitHub CLI publishing contract."""
+"""Check version validation, distribution packaging, and GitHub CLI publishing."""
 
 import argparse
 import json
 from pathlib import Path
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from release import publish, validate_version
+from release import distribution_target, package, publish, validate_version
 
 
 class VersionValidationTest(unittest.TestCase):
@@ -54,6 +55,87 @@ class VersionValidationTest(unittest.TestCase):
         (self.source / "CMakeLists.txt").write_text("project(FooyinHeadphones LANGUAGES CXX)\n")
         with self.assertRaisesRegex(ValueError, "Cannot read"):
             validate_version(self.source, "refs/tags/v0.1.0")
+
+
+class DistributionPackagingTest(unittest.TestCase):
+    distributions = (
+        ({"ID": "ubuntu", "VERSION_ID": "24.04", "PRETTY_NAME": "Ubuntu 24.04 LTS"}, "ubuntu24.04"),
+        ({"ID": "ubuntu", "VERSION_ID": "26.04", "PRETTY_NAME": "Ubuntu 26.04 LTS"}, "ubuntu26.04"),
+        # Rolling Arch does not define VERSION_ID in /etc/os-release.
+        ({"ID": "arch", "PRETTY_NAME": "Arch Linux"}, "archlinux"),
+    )
+
+    def test_rejects_unsupported_distribution_or_architecture(self):
+        for os_release, architecture in (
+            ({"ID": "ubuntu", "VERSION_ID": "22.04"}, "x86_64"),
+            ({"ID": "ubuntu"}, "x86_64"),
+            ({"ID": "debian", "VERSION_ID": "13"}, "x86_64"),
+            ({"ID": "arch"}, "aarch64"),
+        ):
+            with self.subTest(os_release=os_release, architecture=architecture):
+                with self.assertRaisesRegex(ValueError, "Package targets require"):
+                    distribution_target(os_release, architecture)
+
+    def test_packages_distribution_specific_archives_and_install_notes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "CMakeLists.txt").write_text("project(FooyinHeadphones VERSION 0.1.0)\n")
+            (root / "LICENSE").write_text("test license\n")
+            build = root / "build"
+            build.mkdir()
+            args = argparse.Namespace(
+                source=root, build=build, fooyin_source=root, fooyin_build=build,
+                tag="v0.1.0", output=root / "dist",
+            )
+
+            def fake_run(*command, **kwargs):
+                if command[0] == "git":
+                    return "4cb697bd19cfde409afca420b84d15bccc1ffb1e"
+                if command[0] == "ldd":
+                    return "libswresample.so.6 => /usr/lib/libswresample.so.6"
+                if command[0] == "readelf":
+                    return "(RUNPATH) Library runpath: [$ORIGIN/..]"
+                return "test version"
+
+            def fake_subprocess(command, **kwargs):
+                if command[0] == "cmake":
+                    stage = Path(command[command.index("--prefix") + 1])
+                    plugin = stage / "lib/fooyin/plugins/fyplugin_headphones.so"
+                    plugin.parent.mkdir(parents=True)
+                    plugin.write_bytes(b"test plugin")
+                else:
+                    self.assertEqual(command[0], str(build / "tests/pluginlifecycletest"))
+                    self.assertEqual(Path(command[1]).read_bytes(), b"test plugin")
+                    self.assertEqual(kwargs["env"]["QT_QPA_PLATFORM"], "offscreen")
+
+            cache = {
+                "CMAKE_PROJECT_VERSION": "0.1.0", "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_CXX_COMPILER": "/usr/bin/g++",
+            }
+            with patch("release.cache_value", side_effect=lambda build, name: cache[name]), \
+                    patch("release.run", side_effect=fake_run), \
+                    patch("release.subprocess.run", side_effect=fake_subprocess) as commands, \
+                    patch("release.platform.machine", return_value="x86_64"), \
+                    patch("release.outputs"):
+                for os_release, target in self.distributions:
+                    with self.subTest(target=target), \
+                            patch("release.platform.freedesktop_os_release", return_value=os_release):
+                        package(args)
+                        metadata = json.loads((args.output / "build-metadata.json").read_text())
+                        self.assertEqual(metadata["distribution"], target)
+                        self.assertEqual(metadata["os"], os_release["PRETTY_NAME"])
+                        self.assertIn(f"-linux-x86_64-{target}-fooyin-", metadata["artifact"])
+                        self.assertIn("libpipewire-0.3", metadata["libraries"])
+                        self.assertTrue(metadata["built_at"])
+                        archive = args.output / f"{metadata['artifact']}.tar.gz"
+                        self.assertTrue(Path(str(archive) + ".sha256").is_file())
+                        with tarfile.open(archive) as tar:
+                            stream = tar.extractfile(f"{metadata['artifact']}/INSTALL.txt")
+                            assert stream is not None
+                            notes = stream.read().decode()
+                        self.assertIn(f"Built for {os_release['PRETTY_NAME']} x86-64", notes)
+                # Each target is installed and lifecycle-checked after extraction.
+                self.assertEqual(commands.call_count, 6)
 
 
 class ReleasePublishingTest(unittest.TestCase):
@@ -105,6 +187,49 @@ class ReleasePublishingTest(unittest.TestCase):
         command = self.gh.call_args.args[0]
         self.assertEqual(command[:4], ["gh", "release", "upload", "v0.1.0"])
         self.assertIn("--clobber", command)
+
+    def test_publishes_all_distribution_assets_in_one_release(self):
+        self.args.output = self.directory / "dist"
+        expected = []
+        for target in ("ubuntu24.04", "ubuntu26.04", "archlinux"):
+            directory = self.args.output / f"release-linux-{target}"
+            directory.mkdir(parents=True)
+            artifact = f"headphones-{target}"
+            (directory / "build-metadata.json").write_text(
+                json.dumps({"tag": self.args.tag, "artifact": artifact})
+            )
+            for suffix in (".tar.gz", ".tar.gz.sha256"):
+                asset = directory / f"{artifact}{suffix}"
+                asset.write_bytes(b"test asset")
+                expected.append(str(asset))
+        publish(self.args)
+        self.assertEqual(self.gh.call_count, 2)  # One lookup, one create.
+        command = self.gh.call_args.args[0]
+        self.assertEqual(command[:4], ["gh", "release", "create", "v0.1.0"])
+        for asset in expected:
+            self.assertEqual(command.count(asset), 1)
+
+    def test_checks_every_build_before_publishing(self):
+        directory = self.directory / "second-build"
+        directory.mkdir()
+        manifest = directory / "build-metadata.json"
+        manifest.write_text(json.dumps({"tag": "v0.1.0", "artifact": "missing"}))
+        with self.assertRaisesRegex(ValueError, "missing or empty"):
+            publish(self.args)
+        manifest.write_text(json.dumps({"tag": "v0.2.0", "artifact": "missing"}))
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            publish(self.args)
+        manifest.write_text(json.dumps({"tag": "v0.1.0", "artifact": "headphones-test"}))
+        (directory / "headphones-test.tar.gz").write_bytes(b"duplicate")
+        with self.assertRaisesRegex(ValueError, "Duplicate release asset"):
+            publish(self.args)
+        self.gh.assert_not_called()
+
+    def test_rejects_empty_output_before_publishing(self):
+        self.args.output = self.directory / "empty"
+        with self.assertRaisesRegex(ValueError, "No packaged builds"):
+            publish(self.args)
+        self.gh.assert_not_called()
 
     def test_missing_assets_or_wrong_tag_fail_before_publishing(self):
         self.args.tag = "v0.1.0-rc.1"

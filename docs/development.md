@@ -117,15 +117,29 @@ are absent. The plugin, fixture, and dependencies are test-only inputs.
 
 ## Version-tag builds
 
-`.github/workflows/build-tag.yml` builds Linux x86-64 Release artifacts on
-`ubuntu-24.04`. It builds the pinned upstream fooyin Core/Gui/Utils libraries,
+`.github/workflows/build-tag.yml` builds Linux x86-64 Release artifacts for:
+
+| Distribution | Build environment | Archive identifier |
+| --- | --- | --- |
+| Ubuntu 24.04 | Native `ubuntu-24.04` runner | `ubuntu24.04` |
+| Ubuntu 26.04 | Native `ubuntu-26.04` runner | `ubuntu26.04` |
+| Arch Linux | Official `archlinux:base-devel` container on `ubuntu-24.04` | `archlinux` |
+
+Each matrix job installs its distribution's dependencies and uses its default GCC
+toolchain. Arch performs a full `pacman -Syu` upgrade before installing build
+dependencies. Each job builds the pinned upstream fooyin Core/Gui/Utils libraries,
 builds the plugin and its tests, runs CTest offscreen, installs into a temporary
 prefix, and checks the installed ELF dependencies and library search paths. The
 packaging helper then loads the plugin extracted from the archive with the
-existing lifecycle test. Successful builds create a GitHub Release for the tag
-with a `.tar.gz` and its SHA-256 checksum attached. Prerelease tags such as
-`v0.2.0-rc.1` create prereleases. Failed runs upload available CMake/CTest
-diagnostics as workflow artifacts for 14 days.
+existing lifecycle test.
+
+After all matrix jobs pass, a single publishing job creates the GitHub Release
+with one distribution-labelled `.tar.gz` and SHA-256 checksum per target. This
+avoids parallel release-creation races. Prerelease tags such as `v0.2.0-rc.1`
+create prereleases. Successful jobs retain their release files as workflow
+artifacts for 14 days; failed jobs upload available CMake/CTest diagnostics under
+distribution-specific names for 14 days. Matrix failures do not cancel the other
+distribution builds.
 
 Publishing uses GitHub CLI (`gh`) and the workflow's `GITHUB_TOKEN` with
 `contents: write` permission. New releases receive automatically generated release
@@ -169,19 +183,26 @@ gh workflow run build-tag.yml --ref v0.1.0
 
 Manual dispatch requires the workflow to exist on the default branch and at the
 selected tag. Dispatching a branch is rejected by version validation. Rerunning
-rebuilds and uploads the release files again. Runner images and apt package
-updates mean the new binary may differ; consult its build metadata.
+rebuilds and uploads the release files again. Runner/container images and
+distribution package updates mean the new binary may differ; consult its build
+metadata. Arch is a rolling target: its archive records the UTC build time and
+actual library versions rather than a distribution release number.
 
 ### Update the fooyin baseline
 
 `FOOYIN_REF` in the workflow pins the full upstream commit SHA. The current
-revision is `bb8d9f0371b254571fffec310dce3ee1ce005c87`; its CMake version is
-`0.13.1`, so the SHA is the precise compatibility identifier. Build both projects
-with the same compiler, Qt, and FFmpeg installation. When changing this pin,
-verify a clean build, all CTest suites, and the packaged lifecycle check, then
-update the compatibility information here. The archive records actual
-versions of the compiler, CMake, Qt, FFmpeg libraries, and other principal
-dependencies in `build-metadata.json`.
+revision is `4cb697bd19cfde409afca420b84d15bccc1ffb1e` (upstream `v0.14.0`).
+Build both projects with the same compiler, Qt, and FFmpeg installation. When
+changing this pin, verify a clean build, all CTest suites, and the packaged lifecycle
+check on every distribution, then update the compatibility information here. The
+archive records actual versions of the compiler, CMake, Qt, FFmpeg libraries, and
+other principal dependencies in `build-metadata.json`.
+
+Binary compatibility is distribution-specific: for example, an Ubuntu build
+requiring `libswresample.so.4` cannot load against a different FFmpeg library
+major on Arch. Use the matching archive. To inspect loader failures, launch
+fooyin with `QT_DEBUG_PLUGINS=1`; dependency failures happen before the plugin's
+own logging can run.
 
 ## Same-process integration validation
 

@@ -2,6 +2,7 @@
 """Validate version tags, package Linux builds, and publish them with the GitHub CLI."""
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -67,6 +68,15 @@ def cache_value(build, name):
     return match[1]
 
 
+def distribution_target(os_release, architecture):
+    if architecture == "x86_64":
+        if os_release["ID"] == "ubuntu" and os_release.get("VERSION_ID") in ("24.04", "26.04"):
+            return f"ubuntu{os_release['VERSION_ID']}"
+        if os_release["ID"] == "arch":
+            return "archlinux"
+    raise ValueError("Package targets require Ubuntu 24.04, Ubuntu 26.04, or Arch Linux on x86_64.")
+
+
 def package(args):
     source, build = args.source.resolve(), args.build.resolve()
     fooyin_source, fooyin_build = args.fooyin_source.resolve(), args.fooyin_build.resolve()
@@ -77,10 +87,9 @@ def package(args):
         raise ValueError("Release artifacts require CMAKE_BUILD_TYPE=Release.")
 
     fooyin_commit = run("git", "-C", str(fooyin_source), "rev-parse", "HEAD")
-    artifact = f"fooyin-headphones-{tag}-linux-x86_64-ubuntu24.04-fooyin-{fooyin_commit[:12]}"
     os_release = platform.freedesktop_os_release()
-    if (os_release["ID"], os_release["VERSION_ID"], platform.machine()) != ("ubuntu", "24.04", "x86_64"):
-        raise ValueError("This package target requires Ubuntu 24.04 on x86_64.")
+    target = distribution_target(os_release, platform.machine())
+    artifact = f"fooyin-headphones-{tag}-linux-x86_64-{target}-fooyin-{fooyin_commit[:12]}"
     metadata = {
         "artifact": artifact,
         "tag": tag,
@@ -89,6 +98,8 @@ def package(args):
         "fooyin_commit": fooyin_commit,
         "fooyin_version": cache_value(fooyin_build, "CMAKE_PROJECT_VERSION"),
         "os": os_release["PRETTY_NAME"],
+        "distribution": target,
+        "built_at": datetime.now(timezone.utc).isoformat(),
         "architecture": platform.machine(),
         "build_type": cache_value(build, "CMAKE_BUILD_TYPE"),
         "compiler": run(cache_value(build, "CMAKE_CXX_COMPILER"), "--version").splitlines()[0],
@@ -96,7 +107,8 @@ def package(args):
         "libraries": {
             name: run("pkg-config", "--modversion", name)
             for name in ("Qt6Core", "Qt6Multimedia", "libavcodec", "libavformat", "libavfilter",
-                         "libavutil", "libswresample", "taglib", "icu-uc", "libarchive", "zlib")
+                          "libavutil", "libswresample", "libpipewire-0.3", "taglib", "icu-uc",
+                          "libarchive", "zlib")
         },
     }
     metadata_text = json.dumps(metadata, indent=2) + "\n"
@@ -127,13 +139,15 @@ def package(args):
         (stage / "elf-dynamic.txt").write_text(dynamic + "\n")
         (stage / "INSTALL.txt").write_text(
             f"Headphones Preview {tag}\n\n"
-            f"Built for Ubuntu 24.04 x86-64, fooyin commit {fooyin_commit}\n"
+            f"Built for {metadata['os']} x86-64, fooyin commit {fooyin_commit}\n"
             f"(fooyin project version {metadata['fooyin_version']}), Qt {metadata['libraries']['Qt6Core']}, "
             f"libavutil {metadata['libraries']['libavutil']} and "
             f"libswresample {metadata['libraries']['libswresample']}.\n"
             "Use a fooyin build from this revision and a compatible compiler/runtime,\n"
             "Qt, and FFmpeg installation. Exact build versions are in build-metadata.json;\n"
             "the required shared libraries are listed in dependencies.txt.\n\n"
+            "Choose the archive for your distribution. Arch Linux builds target the\n"
+            "fully updated rolling distribution at the recorded build time.\n\n"
             f"1. Verify: sha256sum -c {artifact}.tar.gz.sha256\n"
             f"2. Extract: tar -xzf {artifact}.tar.gz\n"
             "3. Close fooyin and copy lib/fooyin/plugins/fyplugin_headphones.so from\n"
@@ -164,14 +178,23 @@ def package(args):
 
 def publish(args):
     tag, _ = validate_version(args.source, f"refs/tags/{args.tag}")
-    metadata = json.loads((args.output / "build-metadata.json").read_text())
-    if metadata["tag"] != tag:
-        raise ValueError("Packaged build does not match the release tag.")
-    archive = args.output / f"{metadata['artifact']}.tar.gz"
-    files = [str(archive), str(archive) + ".sha256"]
-    for filename in files:
-        if not Path(filename).is_file() or Path(filename).stat().st_size == 0:
-            raise ValueError(f"Release asset is missing or empty: {filename}")
+    manifests = sorted(args.output.rglob("build-metadata.json"))
+    if not manifests:
+        raise ValueError("No packaged builds found in the output directory.")
+    files = []
+    asset_names = set()
+    for manifest in manifests:
+        metadata = json.loads(manifest.read_text())
+        if metadata["tag"] != tag:
+            raise ValueError("Packaged build does not match the release tag.")
+        archive = manifest.parent / f"{metadata['artifact']}.tar.gz"
+        for filename in (archive, Path(str(archive) + ".sha256")):
+            if not filename.is_file() or filename.stat().st_size == 0:
+                raise ValueError(f"Release asset is missing or empty: {filename}")
+            if filename.name in asset_names:
+                raise ValueError(f"Duplicate release asset name: {filename.name}")
+            asset_names.add(filename.name)
+            files.append(str(filename))
 
     repo = ["--repo", args.repo]
     existing = subprocess.run(

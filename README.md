@@ -33,9 +33,12 @@ See [audio routing and troubleshooting](#audio-routing-and-troubleshooting) for 
 Download a plugin build from the **Assets** section on the
 [Releases page](https://github.com/piotrwicijowski/fooyin-headphones-plugin/releases).
 
-Extract the download and follow the included installation instructions. Check
-the included compatibility information to ensure the build matches your system
-and fooyin installation.
+Choose the Linux x86-64 archive for **Ubuntu 24.04**, **Ubuntu 26.04**, or
+**Arch Linux**, then extract it and follow the included installation instructions.
+Each build links against its distribution's libraries, including FFmpeg; choose
+the matching distribution even if the fooyin version is the same. Arch builds
+target a fully updated system at build time. Check `build-metadata.json` and
+`dependencies.txt` in the archive for the exact build versions and required libraries.
 
 ### Build requirements
 
